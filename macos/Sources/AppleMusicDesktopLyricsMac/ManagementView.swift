@@ -59,8 +59,8 @@ struct ManagementView: View {
                         }.buttonStyle(.plain)
                     }
                 }
-                DisclosureGroup("查看已收录歌手（\(ArtistColorEngine.curated.count)）") {
-                    Text(ArtistColorEngine.curated.keys.sorted().joined(separator: "、"))
+                DisclosureGroup("查看已收录歌手（\(ArtistColorEngine.curatedPalettes.count)）") {
+                    Text(ArtistColorEngine.curatedPalettes.map(\.identity).joined(separator: "、"))
                         .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }

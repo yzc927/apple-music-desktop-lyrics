@@ -50,6 +50,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     public bool IsLocked => _locked;
     public bool IsPinned => Topmost;
+    public bool IsClickThrough => _clickThrough;
     public bool IsAutoColor => _autoColor;
     public string CurrentArtist => _lastArtist;
     public double CurrentOffsetSeconds => _controller.OffsetSeconds;
@@ -104,8 +105,11 @@ public partial class OverlayWindow : Window, IDisposable
             Top = Math.Clamp(Top, SystemParameters.VirtualScreenTop,
                 SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 70);
         }
+        ApplyTopmostState(Topmost, notify: false, persist: false);
+        ApplyLockState(_locked, notify: false, persist: false);
         ApplyExtendedStyles();
         UpdateTypography();
+        SaveSettings();
     }
 
     private void UpdateTypography()
@@ -217,13 +221,14 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => HideToTray();
 
-    public void ToggleLock()
+    public void ToggleLock() => ApplyLockState(!_locked, notify: true, persist: true);
+
+    private void ApplyLockState(bool locked, bool notify, bool persist)
     {
-        var locking = !_locked;
-        var unlockOrigin = locking
+        var unlockOrigin = locked && IsLoaded
             ? LockButton.TranslatePoint(new System.Windows.Point(-4, -4), this)
             : new System.Windows.Point();
-        _locked = locking;
+        _locked = locked;
         ResizeMode = _locked ? ResizeMode.NoResize : ResizeMode.CanResize;
         Grip.Visibility = _locked ? Visibility.Collapsed : Visibility.Visible;
         var unlockedVisibility = _locked ? Visibility.Collapsed : Visibility.Visible;
@@ -243,7 +248,8 @@ public partial class OverlayWindow : Window, IDisposable
             Toolbar.Visibility = Visibility.Collapsed;
             Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
             ApplyExtendedStyles();
-            PrepareUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
+            if (IsLoaded)
+                PrepareUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
             _lockedHoverStartedAt = null;
             _unlockRequestedVisible = false;
             _lockedHoverTimer.Start();
@@ -257,7 +263,8 @@ public partial class OverlayWindow : Window, IDisposable
             ApplyExtendedStyles();
             Toolbar.Visibility = Visibility.Visible;
         }
-        _controller.ShowTransient(_locked ? "歌词窗口已锁定" : "歌词窗口已解锁");
+        if (persist) SaveSettings();
+        if (notify) _controller.ShowTransient(_locked ? "歌词窗口已锁定" : "歌词窗口已解锁");
     }
 
     private void PrepareUnlockWindow(double left, double top)
@@ -297,13 +304,17 @@ public partial class OverlayWindow : Window, IDisposable
         }
     }
 
-    public void ToggleTopmost()
+    public void ToggleTopmost() => ApplyTopmostState(!Topmost, notify: true, persist: true);
+
+    private void ApplyTopmostState(bool topmost, bool notify, bool persist)
     {
-        Topmost = !Topmost;
+        Topmost = topmost;
         PinSlash.Visibility = Topmost ? Visibility.Collapsed : Visibility.Visible;
         PinButton.Foreground = System.Windows.Media.Brushes.White;
         PinButton.ToolTip = Topmost ? "取消始终置顶" : "固定到最前端";
-        _controller.ShowTransient(Topmost ? "已固定到最前端" : "已取消置顶");
+        if (_unlockWindow is not null) _unlockWindow.Topmost = Topmost;
+        if (persist) SaveSettings();
+        if (notify) _controller.ShowTransient(Topmost ? "已固定到最前端" : "已取消置顶");
     }
 
     public void ChooseHighlightColor()
@@ -439,6 +450,9 @@ public partial class OverlayWindow : Window, IDisposable
             if (settings is null) return;
 
             _autoColor = settings.AutoColor;
+            _locked = settings.Locked;
+            Topmost = settings.AlwaysOnTop;
+            _clickThrough = settings.ClickThrough;
             if (settings.HighlightColor is { Length: > 0 } highlightColor)
             {
                 try
@@ -486,7 +500,7 @@ public partial class OverlayWindow : Window, IDisposable
                 new OverlaySettings(_highlightColor.ToString(), _autoColor,
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
-                    _fontFamily));
+                    _fontFamily, _locked, Topmost, _clickThrough));
             var temporaryPath = _settingsPath + ".tmp";
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, _settingsPath, true);
@@ -496,12 +510,14 @@ public partial class OverlayWindow : Window, IDisposable
 
     private sealed record OverlaySettings(string HighlightColor, bool AutoColor = false,
         double? Left = null, double? Top = null, double? Width = null, double? Height = null,
-        string? FontFamily = null);
+        string? FontFamily = null, bool Locked = false, bool AlwaysOnTop = true,
+        bool ClickThrough = false);
 
     public void ToggleClickThrough()
     {
         _clickThrough = !_clickThrough;
         ApplyExtendedStyles();
+        SaveSettings();
         _controller.ShowTransient(_clickThrough ? "已开启鼠标穿透（从托盘菜单关闭）" : "已关闭鼠标穿透");
     }
 

@@ -30,7 +30,6 @@ internal static partial class ArtistColorEngine
         ["DECO*27"] = ["#FFFF4F9A"],
         ["Official髭男dism"] = ["#FFFFB84D", "#FFFF7A45"],
         ["藤井 風"] = ["#FF61C995"],
-        ["藤井風"] = ["#FF61C995"],
         ["Ado"] = ["#FF5965FF", "#FF9A5CFF"],
         ["宝鐘マリン"] = ["#FFFF4B5E"],
         ["椎名林檎"] = ["#FFD94A64"],
@@ -49,13 +48,11 @@ internal static partial class ArtistColorEngine
         ["おねがいシラサギ(CV.種﨑敦美)"] = ["#FF8BC6EC"],
         ["春奈るな"] = ["#FF7A8CFF", "#FFAA72E8"],
         ["沢井 美空"] = ["#FF6CCDEB"],
-        ["沢井美空"] = ["#FF6CCDEB"],
         ["fripSide"] = ["#FFFF9D3D", "#FFFFD166"],
         ["Sound Horizon"] = ["#FF5163A8", "#FFD9A441"],
         ["サカナクション"] = ["#FF32B8B0"],
         ["中島みゆき"] = ["#FFB54A63"],
         ["中島 美嘉"] = ["#FF7B6ED6"],
-        ["中島美嘉"] = ["#FF7B6ED6"],
         ["Jay Chou"] = ["#FF5B7CFA", "#FFC18B5A"],
         ["周杰伦"] = ["#FF5B7CFA", "#FFC18B5A"],
         ["周杰倫"] = ["#FF5B7CFA", "#FFC18B5A"],
@@ -107,6 +104,10 @@ internal static partial class ArtistColorEngine
         "#FFC267E8", "#FFFF6FAE", "#FFDB6574", "#FF70B77E"
     ];
 
+    private static readonly IReadOnlyDictionary<string, string[]> CuratedByNormalizedName = Curated
+        .GroupBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal);
+
     public static ArtistPalette Resolve(string rawArtist)
     {
         var identity = StripAlbum(rawArtist).Trim();
@@ -115,11 +116,12 @@ internal static partial class ArtistColorEngine
 
         // Known groups are resolved before splitting. This lets a group own a
         // deliberate signature gradient without pretending its name lists members.
-        if (Curated.TryGetValue(identity, out var exact))
+        if (TryGetCurated(identity, out var exact))
             return new ArtistPalette(identity, exact);
 
         var artists = CollaborationSeparator().Split(identity)
-            .Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Trim()).Where(x => x.Length > 0)
+            .DistinctBy(NormalizeArtistKey, StringComparer.Ordinal)
             .Take(3).ToArray();
         if (artists.Length > 1)
         {
@@ -131,18 +133,25 @@ internal static partial class ArtistColorEngine
     }
 
     public static IReadOnlyList<ArtistPalette> GetCuratedPalettes() => Curated
+        .DistinctBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .OrderBy(item => item.Key, StringComparer.CurrentCultureIgnoreCase)
         .Select(item => new ArtistPalette(item.Key, item.Value))
         .ToArray();
 
     private static string ResolveSingle(string artist)
     {
-        if (Curated.TryGetValue(artist, out var curated)) return curated[0];
+        if (TryGetCurated(artist, out var curated)) return curated[0];
         uint hash = 2166136261;
-        foreach (var character in artist.Trim().ToUpperInvariant())
+        foreach (var character in NormalizeArtistKey(artist))
             hash = (hash ^ character) * 16777619;
         return Fallback[hash % (uint)Fallback.Length];
     }
+
+    internal static string NormalizeArtistKey(string value) =>
+        string.Concat(value.Where(character => !char.IsWhiteSpace(character))).ToUpperInvariant();
+
+    private static bool TryGetCurated(string artist, out string[] colors) =>
+        CuratedByNormalizedName.TryGetValue(NormalizeArtistKey(artist), out colors!);
 
     private static string StripAlbum(string value)
     {

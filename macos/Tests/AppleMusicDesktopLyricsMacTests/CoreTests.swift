@@ -20,4 +20,14 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(colors.first, "#FF4D79FF")
         XCTAssertEqual(colors.last, "#FF5965FF")
     }
+
+    func testArtistIdentityIgnoresWhitespaceButKeepsLanguageAliasesDistinct() {
+        XCTAssertEqual(ArtistColorEngine.normalizedKey(for: " 藤井 風 "), ArtistColorEngine.normalizedKey(for: "藤井風"))
+        XCTAssertEqual(ArtistColorEngine.colors(for: "藤井風"), ArtistColorEngine.colors(for: "藤井 風"))
+        XCTAssertNotEqual(ArtistColorEngine.normalizedKey(for: "周杰伦"), ArtistColorEngine.normalizedKey(for: "周杰倫"))
+        XCTAssertEqual(
+            ArtistColorEngine.curatedPalettes.map { ArtistColorEngine.normalizedKey(for: $0.identity) }.count,
+            Set(ArtistColorEngine.curatedPalettes.map { ArtistColorEngine.normalizedKey(for: $0.identity) }).count
+        )
+    }
 }

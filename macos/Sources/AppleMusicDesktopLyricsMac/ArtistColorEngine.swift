@@ -17,8 +17,8 @@ enum ArtistColorEngine {
         "王心凌": ["#FFFF75B5", "#FF63C7FF"], "Cyndi Wang": ["#FFFF75B5", "#FF63C7FF"],
         "F.I.R.": ["#FF33B68A", "#FF8D6AD8"], "林俊杰": ["#FF6757D9", "#FF4EA8DE"],
         "林俊傑": ["#FF6757D9", "#FF4EA8DE"], "JJ LIN": ["#FF6757D9", "#FF4EA8DE"],
-        "Official髭男dism": ["#FFFFB84D", "#FFFF7A45"], "藤井風": ["#FF61C995"],
-        "藤井 風": ["#FF61C995"], "米津玄師": ["#FF6477B9"],
+        "Official髭男dism": ["#FFFFB84D", "#FFFF7A45"], "藤井 風": ["#FF61C995"],
+        "米津玄師": ["#FF6477B9"],
         "fripSide": ["#FFFF9D3D", "#FFFFD166"], "Da-iCE": ["#FFFF6B5E"],
         "大原櫻子": ["#FFFF7096"], "Kanaria": ["#FFE84A5F"],
         "かいりきベア": ["#FFB26CFF"], "しぐれうい": ["#FF6ED6C1"],
@@ -30,9 +30,9 @@ enum ArtistColorEngine {
         "伊東歌詞太郎": ["#FFE35D5B"], "榊原ゆい": ["#FFF06292"],
         "おねがいシラサギ(CV.種﨑敦美)": ["#FF8BC6EC"],
         "春奈るな": ["#FF7A8CFF", "#FFAA72E8"], "沢井 美空": ["#FF6CCDEB"],
-        "沢井美空": ["#FF6CCDEB"], "Sound Horizon": ["#FF5163A8", "#FFD9A441"],
+        "Sound Horizon": ["#FF5163A8", "#FFD9A441"],
         "サカナクション": ["#FF32B8B0"], "中島みゆき": ["#FFB54A63"],
-        "中島 美嘉": ["#FF7B6ED6"], "中島美嘉": ["#FF7B6ED6"],
+        "中島 美嘉": ["#FF7B6ED6"],
         "許嵩": ["#FF4FB3A5"], "许嵩": ["#FF4FB3A5"], "孙燕姿": ["#FF57B8FF"],
         "孫燕姿": ["#FF57B8FF"], "范玮琪": ["#FFB58BD8"], "范瑋琪": ["#FFB58BD8"],
         "JUVENILE": ["#FF45CFF1"], "王力宏": ["#FF3C78D8", "#FFD4A64A"],
@@ -49,21 +49,45 @@ enum ArtistColorEngine {
         "#FF55B8FF", "#FF5F7CFF", "#FF9B72F2", "#FFC267E8", "#FFFF6FAE"
     ]
 
+    private static let curatedByNormalizedName: [String: [String]] = curated.reduce(into: [:]) { result, item in
+        let key = normalizedKey(for: item.key)
+        if result[key] == nil { result[key] = item.value }
+    }
+
+    static var curatedPalettes: [(identity: String, colors: [String])] {
+        var seen = Set<String>()
+        return curated
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .compactMap { item in
+                seen.insert(normalizedKey(for: item.key)).inserted ? (item.key, item.value) : nil
+            }
+    }
+
     static func colors(for rawArtist: String) -> [String] {
         let identity = rawArtist.components(separatedBy: " — ").first?.trimmingCharacters(in: .whitespaces) ?? rawArtist
-        if let exact = curated[identity] { return exact }
+        if let exact = curatedByNormalizedName[normalizedKey(for: identity)] { return exact }
         let separators = try? NSRegularExpression(pattern: #"\s+(?:&|＆|×|feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*"#, options: .caseInsensitive)
         let range = NSRange(identity.startIndex..., in: identity)
         let artists = separators?.stringByReplacingMatches(in: identity, range: range, withTemplate: "\u{1F}")
             .split(separator: "\u{1F}").map { String($0).trimmingCharacters(in: .whitespaces) } ?? [identity]
-        if artists.count > 1 { return artists.prefix(3).map(singleColor) }
+        var seen = Set<String>()
+        let uniqueArtists = artists.filter { seen.insert(normalizedKey(for: $0)).inserted }
+        if uniqueArtists.count > 1 { return uniqueArtists.prefix(3).map(singleColor) }
         return [singleColor(identity)]
     }
 
     private static func singleColor(_ artist: String) -> String {
-        if let color = curated[artist]?.first { return color }
+        if let color = curatedByNormalizedName[normalizedKey(for: artist)]?.first { return color }
         var hash: UInt32 = 2_166_136_261
-        for scalar in artist.uppercased().unicodeScalars { hash = (hash ^ scalar.value) &* 16_777_619 }
+        for scalar in normalizedKey(for: artist).unicodeScalars { hash = (hash ^ scalar.value) &* 16_777_619 }
         return fallback[Int(hash % UInt32(fallback.count))]
+    }
+
+    static func normalizedKey(for artist: String) -> String {
+        artist.unicodeScalars
+            .filter { !CharacterSet.whitespacesAndNewlines.contains($0) }
+            .map(String.init)
+            .joined()
+            .uppercased()
     }
 }
