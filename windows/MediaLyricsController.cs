@@ -49,6 +49,9 @@ internal sealed class MediaLyricsController : IDisposable
     }
 
     public double OffsetSeconds => _lyricsOffset.TotalSeconds;
+    public string LyricsSource => _usingAppleLyrics
+        ? "Apple Music 官方歌词（后备）"
+        : _lines.Count > 0 ? "LRCLIB 同步歌词（优先）" : "正在获取歌词";
 
     public async void Start()
     {
@@ -124,11 +127,18 @@ internal sealed class MediaLyricsController : IDisposable
     private static GlobalSystemMediaTransportControlsSession? FindAppleMusicSession(
         GlobalSystemMediaTransportControlsSessionManager manager)
     {
-        var sessions = manager.GetSessions();
-        return sessions.FirstOrDefault(session =>
-                   session.SourceAppUserModelId.Contains("AppleMusic", StringComparison.OrdinalIgnoreCase) ||
-                   session.SourceAppUserModelId.Contains("Apple.Music", StringComparison.OrdinalIgnoreCase))
-               ?? manager.GetCurrentSession();
+        static bool IsAppleMusic(GlobalSystemMediaTransportControlsSession session) =>
+            session.SourceAppUserModelId.Contains("AppleMusic", StringComparison.OrdinalIgnoreCase) ||
+            session.SourceAppUserModelId.Contains("Apple.Music", StringComparison.OrdinalIgnoreCase);
+
+        var current = manager.GetCurrentSession();
+        if (current is not null && IsAppleMusic(current)) return current;
+        return manager.GetSessions()
+            .Where(IsAppleMusic)
+            .OrderByDescending(session => session.GetPlaybackInfo().PlaybackStatus ==
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+            .ThenByDescending(session => session.GetTimelineProperties().LastUpdatedTime)
+            .FirstOrDefault();
     }
 
     private async Task LoadLyricsAsync(string title, string artist, string album, TimeSpan duration)
@@ -186,6 +196,13 @@ internal sealed class MediaLyricsController : IDisposable
             var activeDuration = naturalDuration > TimeSpan.FromSeconds(estimatedSeconds * 1.35)
                 ? TimeSpan.FromSeconds(estimatedSeconds)
                 : naturalDuration;
+            if (naturalDuration > activeDuration && position - _lines[index].Time >= activeDuration)
+            {
+                // LRCLIB often omits an explicit empty timestamp for instrumentals.
+                // Do not leave the completed previous sentence on screen for a long gap.
+                _render("•••", next, 0, _artist);
+                return;
+            }
             var lineDuration = activeDuration.TotalMilliseconds;
             if (lineDuration > 0)
                 progress = (position - _lines[index].Time).TotalMilliseconds / lineDuration;

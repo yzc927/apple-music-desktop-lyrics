@@ -29,6 +29,7 @@ public partial class ManagementWindow : Window
         var artist = string.IsNullOrWhiteSpace(_overlay.CurrentArtist) ? "尚未读取到歌手" : _overlay.CurrentArtist;
         CurrentArtistText.Text = artist;
         CurrentModeText.Text = _overlay.IsAutoColor ? "自动配色已开启" : "当前使用手动颜色";
+        LyricsSourceText.Text = $"歌词来源：{_overlay.CurrentLyricsSource}";
         AutoModeButton.Content = _overlay.IsAutoColor ? "关闭自动配色" : "开启自动配色";
         OffsetText.Text = FormatOffset(_overlay.CurrentOffsetSeconds);
         CurrentPalettePreview.Background = CreateBrush(ArtistColorEngine.Resolve(artist).Colors);

@@ -54,6 +54,7 @@ public partial class OverlayWindow : Window, IDisposable
     public bool IsAutoColor => _autoColor;
     public string CurrentArtist => _lastArtist;
     public double CurrentOffsetSeconds => _controller.OffsetSeconds;
+    public string CurrentLyricsSource => _controller.LyricsSource;
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 

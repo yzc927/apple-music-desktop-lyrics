@@ -143,6 +143,12 @@ final class LyricsCoordinator: ObservableObject {
                 let natural = lrcLines[index + 1].time - lrcLines[index].time
                 let estimate = min(6, max(1.4, Double(lrcLines[index].text.count) * 0.28))
                 let active = natural > estimate * 1.35 ? estimate : natural
+                if natural > active, position - lrcLines[index].time >= active {
+                    display.current = "•••"
+                    display.progress = 0
+                    display.source = .lrclib
+                    return
+                }
                 display.progress = min(1, max(0, (position - lrcLines[index].time) / max(0.1, active)))
             } else { display.progress = 1 }
         }

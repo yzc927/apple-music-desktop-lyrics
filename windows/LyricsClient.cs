@@ -28,7 +28,8 @@ internal sealed class LyricsClient
         // Apple Music for Windows sometimes exposes "artist — album" as the artist.
         // If that makes the strict lookup fail, search by title and rank candidates by
         // duration, artist and album instead. Duration is especially useful for covers.
-        if (!results.Any(x => !string.IsNullOrWhiteSpace(x.SyncedLyrics)))
+        var usedTitleOnlySearch = !results.Any(x => !string.IsNullOrWhiteSpace(x.SyncedLyrics));
+        if (usedTitleOnlySearch)
         {
             var titleQuery = $"api/search?track_name={Uri.EscapeDataString(cleanTitle)}";
             results = await Http.GetFromJsonAsync<LyricsResult[]>(titleQuery, cancellationToken) ?? [];
@@ -38,7 +39,19 @@ internal sealed class LyricsClient
             .Where(x => !string.IsNullOrWhiteSpace(x.SyncedLyrics))
             .OrderBy(x => Score(x, title, artist, album, duration))
             .FirstOrDefault();
-        return best?.SyncedLyrics is { } lrc ? LrcParser.Parse(lrc) : [];
+        if (best is null) return [];
+
+        // A title-only search can return a cover or an unrelated recording with the
+        // same name. Prefer no LRCLIB result (and let Apple UI lyrics take over) over
+        // a timeline that visibly stalls or drifts because it belongs to another cut.
+        var durationDifference = Math.Abs(best.Duration - duration.TotalSeconds);
+        var allowedDurationDifference = Math.Max(12, duration.TotalSeconds * 0.06);
+        if (duration.TotalSeconds > 0 && durationDifference > allowedDurationDifference)
+            return [];
+        if (usedTitleOnlySearch && !ContainsEither(best.ArtistName, CleanArtist(artist)) &&
+            durationDifference > 3)
+            return [];
+        return best.SyncedLyrics is { } lrc ? LrcParser.Parse(lrc) : [];
     }
 
     private static double Score(LyricsResult item, string title, string artist, string album, TimeSpan duration)
