@@ -65,27 +65,43 @@ internal sealed class AppleMusicUiLyricsProvider
     private static AppleLyricsSnapshot? TryReadVisibleLines(AutomationElement root)
     {
         // Recent Apple Music builds no longer expose a dedicated CurrentLine id.
-        // The virtualized lyric view keeps the previous line followed by the
-        // highlighted line and upcoming lines in its on-screen accessibility set.
+        // Their lyric scroller keeps the highlighted row at a stable vertical
+        // anchor. IsOffscreen cannot be used here: WinUI may mark the previous
+        // partially clipped row as off-screen even while it remains visible.
         var lyricsView = root.FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.AutomationIdProperty, TimeBasedLyricsId));
         if (lyricsView is null) return null;
 
+        var viewport = lyricsView.Current.BoundingRectangle;
+        if (!double.IsFinite(viewport.Top) || !double.IsFinite(viewport.Height) || viewport.Height <= 0)
+            return null;
+        var highlightAnchor = viewport.Top + viewport.Height * 0.08;
+
         var lines = lyricsView.FindAll(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.AutomationIdProperty, LineId));
-        var visible = new List<AutomationElement>();
+        AutomationElement? currentElement = null;
+        var currentIndex = -1;
+        var nearestDistance = double.MaxValue;
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index];
-            if (!line.Current.IsOffscreen && !string.IsNullOrWhiteSpace(line.Current.Name))
-                visible.Add(line);
+            var bounds = line.Current.BoundingRectangle;
+            if (string.IsNullOrWhiteSpace(line.Current.Name) ||
+                !double.IsFinite(bounds.Top) || bounds.Height <= 0 ||
+                bounds.Bottom <= viewport.Top || bounds.Top >= viewport.Bottom)
+                continue;
+
+            var distance = Math.Abs(bounds.Top - highlightAnchor);
+            if (distance >= nearestDistance) continue;
+            nearestDistance = distance;
+            currentElement = line;
+            currentIndex = index;
         }
 
-        if (visible.Count == 0) return null;
-        var currentIndex = visible.Count > 1 ? 1 : 0;
-        var current = visible[currentIndex].Current.Name?.Trim() ?? "";
-        var next = currentIndex + 1 < visible.Count
-            ? visible[currentIndex + 1].Current.Name?.Trim() ?? ""
+        if (currentElement is null) return null;
+        var current = currentElement.Current.Name?.Trim() ?? "";
+        var next = currentIndex + 1 < lines.Count
+            ? lines[currentIndex + 1].Current.Name?.Trim() ?? ""
             : "";
         return string.IsNullOrWhiteSpace(current)
             ? null

@@ -2,6 +2,8 @@
 
 Apple Music 桌面歌词伴侣。当前提供 Windows 版本，并为后续 macOS 原生版本保留同一仓库结构。
 
+完整安装、操作与故障排查请参阅 [中文详细使用说明](USER_GUIDE.zh-CN.md)。
+
 ## 仓库结构
 
 - [`windows/`](windows/)：可运行的 Windows 桌面歌词应用（WPF / .NET）
