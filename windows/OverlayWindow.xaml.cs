@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace AppleMusicDesktopLyrics;
 
@@ -17,7 +18,12 @@ public partial class OverlayWindow : Window, IDisposable
     private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
     private readonly MediaLyricsController _controller;
+    private readonly DispatcherTimer _lockedHoverTimer;
     private UnlockWindow? _unlockWindow;
+    private DateTimeOffset? _lockedHoverStartedAt;
+    private bool _unlockRequestedVisible;
+    private double _unlockLeft;
+    private double _unlockTop;
     private bool _clickThrough;
     private bool _locked;
     private bool _allowClose;
@@ -58,6 +64,8 @@ public partial class OverlayWindow : Window, IDisposable
             UpdateHighlightClip();
         };
         LoadSettings();
+        _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
+            DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
         _controller = new MediaLyricsController(SetLines, ShowToast);
         _controller.Start();
     }
@@ -216,24 +224,58 @@ public partial class OverlayWindow : Window, IDisposable
             Toolbar.Visibility = Visibility.Collapsed;
             Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
             ApplyExtendedStyles();
-            ShowUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
+            PrepareUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
+            _lockedHoverStartedAt = null;
+            _unlockRequestedVisible = false;
+            _lockedHoverTimer.Start();
         }
         else
         {
-            _unlockWindow?.Hide();
+            _lockedHoverTimer.Stop();
+            _lockedHoverStartedAt = null;
+            _unlockRequestedVisible = false;
+            _unlockWindow?.HideImmediately();
             ApplyExtendedStyles();
             Toolbar.Visibility = Visibility.Visible;
         }
         _controller.ShowTransient(_locked ? "歌词窗口已锁定" : "歌词窗口已解锁");
     }
 
-    private void ShowUnlockWindow(double left, double top)
+    private void PrepareUnlockWindow(double left, double top)
     {
         _unlockWindow ??= new UnlockWindow(ToggleLock);
-        _unlockWindow.Left = left;
-        _unlockWindow.Top = top;
+        _unlockLeft = left;
+        _unlockTop = top;
+        _unlockWindow.Left = _unlockLeft;
+        _unlockWindow.Top = _unlockTop;
         _unlockWindow.Topmost = Topmost;
-        if (!_unlockWindow.IsVisible) _unlockWindow.Show();
+    }
+
+    private void TrackLockedHover()
+    {
+        if (!_locked || !IsVisible) return;
+        var cursor = System.Windows.Forms.Cursor.Position;
+        var local = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
+        var isInside = new Rect(0, 0, ActualWidth, ActualHeight).Contains(local);
+        if (!isInside)
+        {
+            _lockedHoverStartedAt = null;
+            if (_unlockRequestedVisible)
+            {
+                _unlockRequestedVisible = false;
+                _unlockWindow?.HideWithFade();
+            }
+            return;
+        }
+
+        _lockedHoverStartedAt ??= DateTimeOffset.UtcNow;
+        if (DateTimeOffset.UtcNow - _lockedHoverStartedAt < TimeSpan.FromSeconds(1)) return;
+        if (!_unlockRequestedVisible)
+        {
+            _unlockRequestedVisible = true;
+            PrepareUnlockWindow(_unlockLeft, _unlockTop);
+            _unlockWindow!.ShowWithFade();
+        }
     }
 
     public void ToggleTopmost()
@@ -393,7 +435,10 @@ public partial class OverlayWindow : Window, IDisposable
     public void HideToTray()
     {
         SaveSettings();
-        _unlockWindow?.Hide();
+        _lockedHoverTimer.Stop();
+        _lockedHoverStartedAt = null;
+        _unlockRequestedVisible = false;
+        _unlockWindow?.HideImmediately();
         Hide();
     }
 
@@ -405,7 +450,10 @@ public partial class OverlayWindow : Window, IDisposable
             Dispatcher.BeginInvoke(() =>
             {
                 var origin = LockButton.TranslatePoint(new System.Windows.Point(-4, -4), this);
-                ShowUnlockWindow(Left + origin.X, Top + origin.Y);
+                PrepareUnlockWindow(Left + origin.X, Top + origin.Y);
+                _lockedHoverStartedAt = null;
+                _unlockRequestedVisible = false;
+                _lockedHoverTimer.Start();
             });
         }
     }
@@ -429,6 +477,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void Dispose()
     {
+        _lockedHoverTimer.Stop();
         _unlockWindow?.Close();
         _controller.Dispose();
     }
