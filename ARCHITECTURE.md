@@ -4,7 +4,8 @@
 
 1. A platform playback adapter reads the current Apple Music track and timeline.
 2. On Windows, `AppleMusicUiLyricsProvider` first reads Apple Music's public UI Automation
-   `Line` / `CurrentLine` elements and follows Apple's own line selection.
+   lyric elements. It uses `CurrentLine` when available and the virtualized visible `Line`
+   sequence used by newer Apple Music builds otherwise.
 3. If those elements are unavailable, `LyricsClient` searches LRCLIB using title, artist,
    album, and duration, and `LrcParser` builds the fallback lyric timeline.
 4. The controller applies per-track timing corrections and guards against small timeline regressions.

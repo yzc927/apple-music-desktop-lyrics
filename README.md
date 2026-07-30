@@ -35,7 +35,8 @@ dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -r win-x64 `
 ## 数据与隐私
 
 应用通过系统媒体会话读取当前曲目的歌名、歌手、专辑、时长、播放状态和进度，并通过
-Windows UI Automation 读取 Apple Music 已显示的歌词行和 `CurrentLine`。此过程不读取
+Windows UI Automation 读取 Apple Music 已显示的歌词行；兼容提供 `CurrentLine` 的版本，
+也兼容仅提供虚拟化 `Line` 列表的新版本。此过程不读取
 Apple ID、密码、Cookie 或令牌。只有 Apple 歌词不可读时，曲目信息才会发送给 LRCLIB
 进行后备匹配。窗口、字体和逐歌曲时间偏移设置只保存在本机。
 

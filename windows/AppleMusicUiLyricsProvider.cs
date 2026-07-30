@@ -15,6 +15,7 @@ internal sealed class AppleMusicUiLyricsProvider
     private const string LyricsButtonId = "LyricsToggleButton";
     private const string CurrentLineId = "CurrentLine";
     private const string LineId = "Line";
+    private const string TimeBasedLyricsId = "TimeBasedLyrics";
     private const string TrackTitleId = "ScrollingText";
 
     public async Task<AppleLyricsSnapshot?> PrepareAsync(string title, CancellationToken cancellationToken)
@@ -40,8 +41,11 @@ internal sealed class AppleMusicUiLyricsProvider
 
             var currentElement = root.FindFirst(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.AutomationIdProperty, CurrentLineId));
-            var current = currentElement?.Current.Name?.Trim() ?? "";
-            if (currentElement is null || string.IsNullOrWhiteSpace(current)) return null;
+            if (currentElement is null)
+                return TryReadVisibleLines(root);
+
+            var current = currentElement.Current.Name?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(current)) return null;
 
             // WinUI places every lyric TextBlock inside a sibling group. Walking to
             // the next group is much cheaper than scanning the entire Apple window.
@@ -56,6 +60,36 @@ internal sealed class AppleMusicUiLyricsProvider
         catch (InvalidOperationException) { }
         catch (COMException) { }
         return null;
+    }
+
+    private static AppleLyricsSnapshot? TryReadVisibleLines(AutomationElement root)
+    {
+        // Recent Apple Music builds no longer expose a dedicated CurrentLine id.
+        // The virtualized lyric view keeps the previous line followed by the
+        // highlighted line and upcoming lines in its on-screen accessibility set.
+        var lyricsView = root.FindFirst(TreeScope.Descendants,
+            new PropertyCondition(AutomationElement.AutomationIdProperty, TimeBasedLyricsId));
+        if (lyricsView is null) return null;
+
+        var lines = lyricsView.FindAll(TreeScope.Descendants,
+            new PropertyCondition(AutomationElement.AutomationIdProperty, LineId));
+        var visible = new List<AutomationElement>();
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+            if (!line.Current.IsOffscreen && !string.IsNullOrWhiteSpace(line.Current.Name))
+                visible.Add(line);
+        }
+
+        if (visible.Count == 0) return null;
+        var currentIndex = visible.Count > 1 ? 1 : 0;
+        var current = visible[currentIndex].Current.Name?.Trim() ?? "";
+        var next = currentIndex + 1 < visible.Count
+            ? visible[currentIndex + 1].Current.Name?.Trim() ?? ""
+            : "";
+        return string.IsNullOrWhiteSpace(current)
+            ? null
+            : new AppleLyricsSnapshot(current, next);
     }
 
     public void OpenLyricsPanelIfNeeded()

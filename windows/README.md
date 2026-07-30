@@ -21,7 +21,8 @@ dotnet run --project .\AppleMusicDesktopLyrics.csproj
 图标自身拦截点击，歌词覆盖区域后面的其他应用控件仍可正常操作。解锁图标默认隐藏；
 鼠标在歌词区域停留 1 秒后淡入，移出区域后淡出。
 “色”按钮或托盘菜单中的“自定义歌词颜色”可以设置已唱部分的填充颜色，选择结果会
-保存到本机。Apple 与 LRCLIB 模式的换行分别以 Apple 的 `CurrentLine` 和 LRC 时间戳
+保存到本机。Apple 模式优先使用 `CurrentLine`，新版 Apple Music 未提供该标记时会跟随
+其虚拟化的可见 `Line` 队列；LRCLIB 模式使用 LRC 时间戳
 为准；因为没有可用的逐字时间戳，行内填色仍按文字长度和相邻时间平滑估算。
 
 工具栏的“慢”和“快”每次调整 0.5 秒，托盘菜单还可将偏移归零。“自”按钮开启
@@ -42,7 +43,7 @@ Windows 专用实现，方便后续用 macOS 的媒体适配器和 AppKit/SwiftU
 Microsoft YaHei UI。歌词悬浮窗不提供管理入口，以减少误触。
 
 程序会在需要时通过 Windows UI Automation 自动打开 Apple Music 的歌词面板，读取其中
-AutomationId 为 `Line` 和 `CurrentLine` 的公开文本元素。它不加载 Apple 私有 DLL，也不
+AutomationId 为 `Line`（以及部分版本中的 `CurrentLine`）的公开文本元素。它不加载 Apple 私有 DLL，也不
 读取或保存 Apple 账户 Cookie/令牌。若当前 Apple Music 版本未暴露这些元素，程序会自动
 回退到 LRCLIB。
 
