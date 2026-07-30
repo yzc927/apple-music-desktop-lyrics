@@ -89,8 +89,8 @@ final class OverlayWindowController: NSObject, NSWindowDelegate {
     }
 
     private func startHoverTracking() {
-        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateUnlockHover() }
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [controller = self] _ in
+            Task { @MainActor in controller.updateUnlockHover() }
         }
     }
 

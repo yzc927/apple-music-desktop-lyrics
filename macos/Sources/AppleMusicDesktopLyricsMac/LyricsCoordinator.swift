@@ -23,8 +23,8 @@ final class LyricsCoordinator: ObservableObject {
 
     func start() {
         requestPermissions()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.poll() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [coordinator = self] _ in
+            Task { @MainActor in await coordinator.poll() }
         }
         Task { await poll() }
     }
