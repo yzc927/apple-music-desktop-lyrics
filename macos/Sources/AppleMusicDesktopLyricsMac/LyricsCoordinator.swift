@@ -141,16 +141,12 @@ final class LyricsCoordinator: ObservableObject {
             display.next = index + 1 < lrcLines.count ? lrcLines[index + 1].text : ""
             if index + 1 < lrcLines.count {
                 let natural = lrcLines[index + 1].time - lrcLines[index].time
-                let estimate = min(6, max(1.4, Double(lrcLines[index].text.count) * 0.28))
-                let active = natural > estimate * 1.35 ? estimate : natural
-                if natural > active, position - lrcLines[index].time >= active {
-                    display.current = "•••"
-                    display.progress = 0
-                    display.source = .lrclib
-                    return
-                }
-                display.progress = min(1, max(0, (position - lrcLines[index].time) / max(0.1, active)))
+                // LRC is line-synchronised, not word-synchronised. Use the real
+                // interval instead of guessing from character count so the sweep
+                // reaches 100% precisely at the next timestamp.
+                display.progress = min(1, max(0, (position - lrcLines[index].time) / max(0.1, natural)))
             } else { display.progress = 1 }
+            if display.current == "♪" { display.current = "•••" }
         }
         display.source = .lrclib
     }
