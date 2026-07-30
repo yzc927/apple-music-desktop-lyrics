@@ -138,6 +138,9 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts = new CancellationTokenSource();
         try
         {
+            _lines = await _lyricsClient.GetAsync(title, artist, album, duration, _lyricsCts.Token);
+            if (_lines.Count > 0) return;
+
             var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
             if (appleSnapshot is not null)
             {
@@ -145,9 +148,7 @@ internal sealed class MediaLyricsController : IDisposable
                 ApplyAppleSnapshot(appleSnapshot);
                 return;
             }
-
-            _lines = await _lyricsClient.GetAsync(title, artist, album, duration, _lyricsCts.Token);
-            if (_lines.Count == 0) _render(title, "未找到同步歌词", 0, _artist);
+            _render(title, "未找到同步歌词", 0, _artist);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
