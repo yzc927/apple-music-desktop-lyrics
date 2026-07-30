@@ -16,13 +16,15 @@ internal sealed class MediaLyricsController : IDisposable
     private IReadOnlyList<LyricLine> _lines = [];
     private string _mediaKey = "";
     private string _title = "";
-    private TimeSpan _position;
-    private DateTimeOffset _positionUpdatedAt;
+    private TimeSpan _clockPosition;
+    private DateTimeOffset _clockUpdatedAt;
+    private TimeSpan _clockCorrection;
+    private bool _clockInitialized;
+    private bool _clockPlaying;
     private bool _playing;
     private bool _polling;
     private string _artist = "";
     private TimeSpan _lyricsOffset;
-    private TimeSpan? _lastRenderedPosition;
     private CancellationTokenSource _lyricsCts = new();
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
@@ -69,15 +71,23 @@ internal sealed class MediaLyricsController : IDisposable
             var media = await _session.TryGetMediaPropertiesAsync();
             var timeline = _session.GetTimelineProperties();
             var playback = _session.GetPlaybackInfo();
-            _position = timeline.Position;
-            _positionUpdatedAt = timeline.LastUpdatedTime;
-            _playing = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            var now = DateTimeOffset.UtcNow;
+            var playing = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            var sampledPosition = timeline.Position;
+            if (playing)
+            {
+                var sampleAge = now - timeline.LastUpdatedTime;
+                if (sampleAge > TimeSpan.Zero && sampleAge < TimeSpan.FromSeconds(5))
+                    sampledPosition += sampleAge;
+            }
 
             var key = $"{media.Title}\n{media.Artist}\n{timeline.EndTime.TotalSeconds:0}";
-            if (key == _mediaKey) return;
+            var mediaChanged = key != _mediaKey;
+            UpdatePlaybackClock(sampledPosition, playing, now, mediaChanged);
+            _playing = playing;
+            if (!mediaChanged) return;
             _mediaKey = key;
             _lyricsOffset = _offsetStore.Get(_mediaKey);
-            _lastRenderedPosition = null;
             _title = media.Title;
             _artist = media.Artist;
             _lines = [];
@@ -124,13 +134,7 @@ internal sealed class MediaLyricsController : IDisposable
     private void Render()
     {
         if (_lines.Count == 0 || _session is null) return;
-        var position = _position;
-        if (_playing) position += DateTimeOffset.UtcNow - _positionUpdatedAt;
-        position += _lyricsOffset;
-        if (_playing && _lastRenderedPosition is { } previous && position < previous &&
-            previous - position < TimeSpan.FromSeconds(1.25))
-            position = previous;
-        _lastRenderedPosition = position;
+        var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
         var index = -1;
         for (var i = 0; i < _lines.Count; i++)
         {
@@ -160,6 +164,60 @@ internal sealed class MediaLyricsController : IDisposable
             progress = 1;
         }
         _render(current, next, Math.Clamp(progress, 0, 1), _artist);
+    }
+
+    private void UpdatePlaybackClock(TimeSpan sample, bool playing, DateTimeOffset now, bool forceReset)
+    {
+        if (!_clockInitialized || forceReset || playing != _clockPlaying)
+        {
+            _clockPosition = sample;
+            _clockUpdatedAt = now;
+            _clockCorrection = TimeSpan.Zero;
+            _clockPlaying = playing;
+            _clockInitialized = true;
+            return;
+        }
+
+        var predicted = AdvancePlaybackClock(now);
+        var error = sample - predicted;
+        if (Math.Abs(error.TotalSeconds) >= 1.75)
+        {
+            // A large discontinuity is a real seek or track restart.
+            _clockPosition = sample;
+            _clockUpdatedAt = now;
+            _clockCorrection = TimeSpan.Zero;
+            return;
+        }
+
+        // Merge small timing errors into a bounded correction budget. Render ticks
+        // consume it gradually, so the lyric clock never freezes or visibly jumps.
+        var mergedSeconds = Math.Clamp(
+            _clockCorrection.TotalSeconds + error.TotalSeconds * 0.45, -1.2, 1.2);
+        _clockCorrection = TimeSpan.FromSeconds(mergedSeconds);
+    }
+
+    private TimeSpan AdvancePlaybackClock(DateTimeOffset now)
+    {
+        if (!_clockInitialized) return TimeSpan.Zero;
+        var elapsed = now - _clockUpdatedAt;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        if (elapsed > TimeSpan.FromSeconds(2)) elapsed = TimeSpan.FromSeconds(2);
+
+        var advance = _clockPlaying ? elapsed : TimeSpan.Zero;
+        if (_clockPlaying && _clockCorrection != TimeSpan.Zero)
+        {
+            // Slew by at most 20% of real time. Negative correction still leaves
+            // the playback clock moving forward at 80% speed.
+            var maximumStep = elapsed.TotalSeconds * 0.20;
+            var stepSeconds = Math.Clamp(_clockCorrection.TotalSeconds, -maximumStep, maximumStep);
+            var correctionStep = TimeSpan.FromSeconds(stepSeconds);
+            advance += correctionStep;
+            _clockCorrection -= correctionStep;
+        }
+
+        _clockPosition += advance;
+        _clockUpdatedAt = now;
+        return _clockPosition;
     }
 
     public void RefreshLyrics()

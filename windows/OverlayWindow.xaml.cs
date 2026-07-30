@@ -22,6 +22,9 @@ public partial class OverlayWindow : Window, IDisposable
     private bool _locked;
     private bool _allowClose;
     private double _highlightProgress;
+    private double _highlightTextStart;
+    private double _highlightTextWidth;
+    private readonly RectangleGeometry _highlightClip = new();
     private System.Windows.Media.Color _highlightColor = System.Windows.Media.Color.FromRgb(255, 59, 48);
     private bool _autoColor;
     private string _lastArtist = "";
@@ -46,10 +49,12 @@ public partial class OverlayWindow : Window, IDisposable
     public OverlayWindow()
     {
         InitializeComponent();
+        CurrentHighlightLine.Clip = _highlightClip;
         Loaded += OnLoaded;
         SizeChanged += (_, _) =>
         {
             UpdateTypography();
+            UpdateHighlightMetrics();
             UpdateHighlightClip();
         };
         LoadSettings();
@@ -94,14 +99,19 @@ public partial class OverlayWindow : Window, IDisposable
             _lastArtist = artist;
             if (_autoColor) ApplyAutomaticColor(artist);
         }
-        CurrentLine.Text = current;
-        CurrentHighlightLine.Text = current;
-        NextLine.Text = next;
+        if (!string.Equals(CurrentLine.Text, current, StringComparison.Ordinal))
+        {
+            CurrentLine.Text = current;
+            CurrentHighlightLine.Text = current;
+            UpdateHighlightMetrics();
+        }
+        if (!string.Equals(NextLine.Text, next, StringComparison.Ordinal))
+            NextLine.Text = next;
         _highlightProgress = Math.Clamp(progress, 0, 1);
         UpdateHighlightClip();
     }
 
-    private void UpdateHighlightClip()
+    private void UpdateHighlightMetrics()
     {
         if (!IsLoaded || CurrentHighlightLine.ActualWidth <= 0) return;
         var typeface = new Typeface(CurrentHighlightLine.FontFamily,
@@ -110,11 +120,16 @@ public partial class OverlayWindow : Window, IDisposable
         var formatted = new FormattedText(CurrentHighlightLine.Text, CultureInfo.CurrentUICulture,
             System.Windows.FlowDirection.LeftToRight, typeface, CurrentHighlightLine.FontSize,
             CurrentHighlightLine.Foreground, VisualTreeHelper.GetDpi(this).PixelsPerDip);
-        var textWidth = Math.Min(formatted.WidthIncludingTrailingWhitespace,
+        _highlightTextWidth = Math.Min(formatted.WidthIncludingTrailingWhitespace,
             CurrentHighlightLine.ActualWidth);
-        var start = Math.Max(0, (CurrentHighlightLine.ActualWidth - textWidth) / 2);
-        CurrentHighlightLine.Clip = new RectangleGeometry(new Rect(start, 0,
-            textWidth * _highlightProgress, Math.Max(1, CurrentHighlightLine.ActualHeight)));
+        _highlightTextStart = Math.Max(0, (CurrentHighlightLine.ActualWidth - _highlightTextWidth) / 2);
+    }
+
+    private void UpdateHighlightClip()
+    {
+        if (!IsLoaded || CurrentHighlightLine.ActualWidth <= 0) return;
+        _highlightClip.Rect = new Rect(_highlightTextStart, 0,
+            _highlightTextWidth * _highlightProgress, Math.Max(1, CurrentHighlightLine.ActualHeight));
     }
 
     private void ShowToast(string message)
