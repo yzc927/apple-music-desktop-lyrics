@@ -9,6 +9,7 @@ Apple Music 桌面歌词伴侣。当前提供 Windows 可运行版本和 macOS �
 - [`windows/`](windows/)：可运行的 Windows 桌面歌词应用（WPF / .NET）
 - [`macos/`](macos/)：SwiftUI/AppKit 原生版本，可在 Mac 上用 Xcode 编译和实机调试
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)：跨平台边界、数据流和隐私说明
+- [`assets/app-icon.png`](assets/app-icon.png)：Windows 与 macOS 共用的透明图标母版
 
 ## Windows 功能
 

@@ -25,7 +25,10 @@ macOS 版使用 Swift、SwiftUI 与 AppKit 实现，目标系统为 macOS 13 或
 ```text
 macos/
 ├── Package.swift
-├── Resources/Info.plist
+├── Resources/
+│   ├── Info.plist
+│   ├── AppIcon.icns
+│   └── AppIcon.iconset/
 ├── scripts/build-app.sh
 └── Sources/AppleMusicDesktopLyricsMac/
     ├── AppDelegate.swift
