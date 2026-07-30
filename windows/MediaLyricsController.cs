@@ -189,21 +189,11 @@ internal sealed class MediaLyricsController : IDisposable
         if (index >= 0 && index + 1 < _lines.Count)
         {
             var naturalDuration = _lines[index + 1].Time - _lines[index].Time;
-            // Line-synced LRC has no word timestamps. Avoid stretching the sweep
-            // across a long instrumental gap: finish within a reasonable singing
-            // duration, then hold the completed color until the next line.
-            var estimatedSeconds = Math.Clamp(_lines[index].Text.Length * 0.28, 1.4, 6.0);
-            var activeDuration = naturalDuration > TimeSpan.FromSeconds(estimatedSeconds * 1.35)
-                ? TimeSpan.FromSeconds(estimatedSeconds)
-                : naturalDuration;
-            if (naturalDuration > activeDuration && position - _lines[index].Time >= activeDuration)
-            {
-                // LRCLIB often omits an explicit empty timestamp for instrumentals.
-                // Do not leave the completed previous sentence on screen for a long gap.
-                _render("•••", next, 0, _artist);
-                return;
-            }
-            var lineDuration = activeDuration.TotalMilliseconds;
+            // Line-synced LRC only tells us when each line starts. Estimating its
+            // duration from character count makes fast or unusually phrased songs
+            // finish early. Sweep across the real interval so it always reaches the
+            // end exactly when the next timestamp begins.
+            var lineDuration = naturalDuration.TotalMilliseconds;
             if (lineDuration > 0)
                 progress = (position - _lines[index].Time).TotalMilliseconds / lineDuration;
         }
@@ -211,6 +201,8 @@ internal sealed class MediaLyricsController : IDisposable
         {
             progress = 1;
         }
+        if (string.Equals(current, "♪", StringComparison.Ordinal))
+            current = "•••";
         _render(current, next, Math.Clamp(progress, 0, 1), _artist);
     }
 
