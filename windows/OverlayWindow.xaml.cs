@@ -59,7 +59,7 @@ public partial class OverlayWindow : Window, IDisposable
     public OverlayWindow()
     {
         InitializeComponent();
-        _placementSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        _placementSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _placementSaveTimer.Tick += (_, _) =>
         {
             _placementSaveTimer.Stop();
@@ -436,22 +436,32 @@ public partial class OverlayWindow : Window, IDisposable
         {
             if (!File.Exists(_settingsPath)) return;
             var settings = JsonSerializer.Deserialize<OverlaySettings>(File.ReadAllText(_settingsPath));
-            if (settings?.HighlightColor is not { Length: > 0 }) return;
-            var converted = System.Windows.Media.ColorConverter.ConvertFromString(settings.HighlightColor);
-            if (converted is not System.Windows.Media.Color color) return;
-            _highlightColor = color;
+            if (settings is null) return;
+
             _autoColor = settings.AutoColor;
+            if (settings.HighlightColor is { Length: > 0 } highlightColor)
+            {
+                try
+                {
+                    var converted = System.Windows.Media.ColorConverter.ConvertFromString(highlightColor);
+                    if (converted is System.Windows.Media.Color color)
+                        _highlightColor = color;
+                }
+                catch { /* Keep the default color, but continue restoring placement. */ }
+            }
             if (!string.IsNullOrWhiteSpace(settings.FontFamily) && GetAvailableFonts().Any(item =>
                     string.Equals(item.FamilyName, settings.FontFamily, StringComparison.OrdinalIgnoreCase)))
                 _fontFamily = settings.FontFamily;
             ApplyFontFamily();
-            CurrentHighlightLine.Foreground = new SolidColorBrush(color);
-            ColorButton.Foreground = new SolidColorBrush(color);
+            CurrentHighlightLine.Foreground = new SolidColorBrush(_highlightColor);
+            ColorButton.Foreground = new SolidColorBrush(_highlightColor);
             AutoColorButton.Foreground = _autoColor
-                ? new SolidColorBrush(color)
+                ? new SolidColorBrush(_highlightColor)
                 : System.Windows.Media.Brushes.White;
             if (settings.Width is > 0 && settings.Height is > 0 &&
-                settings.Left is { } left && settings.Top is { } top)
+                settings.Left is { } left && settings.Top is { } top &&
+                double.IsFinite(settings.Width.Value) && double.IsFinite(settings.Height.Value) &&
+                double.IsFinite(left) && double.IsFinite(top))
             {
                 Width = Math.Clamp(settings.Width.Value, MinWidth, 3000);
                 Height = Math.Clamp(settings.Height.Value, MinHeight, 1800);
@@ -465,15 +475,21 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void SaveSettings()
     {
+        // Startup failures or a very early shutdown must never erase a placement that was
+        // successfully read from disk. Hidden windows remain loaded and are still saved.
+        if (!IsLoaded) return;
         try
         {
             var directory = Path.GetDirectoryName(_settingsPath)!;
             Directory.CreateDirectory(directory);
-            File.WriteAllText(_settingsPath, JsonSerializer.Serialize(
+            var json = JsonSerializer.Serialize(
                 new OverlaySettings(_highlightColor.ToString(), _autoColor,
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
-                    _fontFamily)));
+                    _fontFamily));
+            var temporaryPath = _settingsPath + ".tmp";
+            File.WriteAllText(temporaryPath, json);
+            File.Move(temporaryPath, _settingsPath, true);
         }
         catch { }
     }
@@ -493,6 +509,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        SaveSettings();
         if (_allowClose) return;
         e.Cancel = true;
         HideToTray();
@@ -543,6 +560,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void Dispose()
     {
+        SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
         _unlockWindow?.Close();

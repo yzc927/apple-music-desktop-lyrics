@@ -49,7 +49,7 @@ AutomationId 为 `Line`（以及部分版本中的 `CurrentLine`）的公开文�
 未暴露这些元素，则显示未找到同步歌词。
 
 歌词窗口隐藏到托盘或退出时会保存当前位置和大小；下次启动自动恢复，并在显示器布局
-变化后将窗口限制在可见屏幕范围内。移动或缩放停止约 450 毫秒后也会自动保存，因此
+变化后将窗口限制在可见屏幕范围内。移动或缩放停止约 250 毫秒后也会自动保存，因此
 强制重启或异常退出不再依赖关闭事件。
 
 播放同步使用本地连续时钟：Windows 媒体会话的周期样本用于平滑校准，小幅误差限速
@@ -58,11 +58,10 @@ AutomationId 为 `Line`（以及部分版本中的 `CurrentLine`）的公开文�
 ## 发布单文件程序
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=true -o .\publish
+dotnet publish -c Release -o .\publish
 ```
 
-输出位于 `publish` 目录。
+Release 发布参数已经写入项目文件；输出位于 `publish` 目录，并只包含一个自包含 EXE。
 
 ## 已知限制
 

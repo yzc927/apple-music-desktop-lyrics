@@ -217,8 +217,7 @@ Windows 无障碍接口中已经显示的文本。
 
 ```powershell
 dotnet build .\windows\AppleMusicDesktopLyrics.csproj -c Release
-dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -r win-x64 `
-  --self-contained true -p:PublishSingleFile=true -o .\windows\publish
+dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -o .\windows\publish
 ```
 
 发布结果为单文件 Windows x64 程序。构建产生的 `bin`、`obj`、`publish` 和临时更新目录不会提交到 Git。
