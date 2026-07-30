@@ -38,7 +38,9 @@ public partial class App : System.Windows.Application
         timingMenu.DropDownItems.Add("快 0.5 秒", null, (_, _) => Dispatcher.Invoke(() => _window.AdjustLyrics(0.5)));
         timingMenu.DropDownItems.Add("偏移归零", null, (_, _) => Dispatcher.Invoke(() => _window.ResetLyricsOffset()));
         menu.Items.Add(timingMenu);
-        menu.Items.Add("鼠标穿透", null, (_, _) => Dispatcher.Invoke(() => _window.ToggleClickThrough()));
+        var clickThroughItem = new Forms.ToolStripMenuItem("鼠标穿透") { CheckOnClick = false };
+        clickThroughItem.Click += (_, _) => Dispatcher.Invoke(() => _window.ToggleClickThrough());
+        menu.Items.Add(clickThroughItem);
         menu.Items.Add("重新获取歌词", null, (_, _) => Dispatcher.Invoke(() => _window.RefreshLyrics()));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出程序", null, (_, _) => Dispatcher.Invoke(() =>
@@ -51,6 +53,7 @@ public partial class App : System.Windows.Application
             lockItem.Checked = _window.IsLocked;
             topmostItem.Checked = _window.IsPinned;
             autoColorItem.Checked = _window.IsAutoColor;
+            clickThroughItem.Checked = _window.IsClickThrough;
         });
 
         _tray = new Forms.NotifyIcon
