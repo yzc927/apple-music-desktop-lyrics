@@ -16,11 +16,8 @@ public partial class OverlayWindow : Window, IDisposable
     private const int GwlExStyle = -20;
     private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
-    private const int WmNcHitTest = 0x0084;
-    private static readonly IntPtr HtTransparent = new(-1);
-    private static readonly IntPtr HtClient = new(1);
     private readonly MediaLyricsController _controller;
-    private HwndSource? _hwndSource;
+    private UnlockWindow? _unlockWindow;
     private bool _clickThrough;
     private bool _locked;
     private bool _allowClose;
@@ -76,8 +73,6 @@ public partial class OverlayWindow : Window, IDisposable
                 SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 70);
         }
         ApplyExtendedStyles();
-        _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
-        _hwndSource?.AddHook(WindowMessageHook);
         UpdateTypography();
     }
 
@@ -162,7 +157,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void Surface_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        Toolbar.Visibility = _locked ? Visibility.Visible : Visibility.Collapsed;
+        Toolbar.Visibility = Visibility.Collapsed;
         Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
     }
 
@@ -182,7 +177,11 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void ToggleLock()
     {
-        _locked = !_locked;
+        var locking = !_locked;
+        var unlockOrigin = locking
+            ? LockButton.TranslatePoint(new System.Windows.Point(-4, -4), this)
+            : new System.Windows.Point();
+        _locked = locking;
         ResizeMode = _locked ? ResizeMode.NoResize : ResizeMode.CanResize;
         Grip.Visibility = _locked ? Visibility.Collapsed : Visibility.Visible;
         var unlockedVisibility = _locked ? Visibility.Collapsed : Visibility.Visible;
@@ -199,26 +198,27 @@ public partial class OverlayWindow : Window, IDisposable
         LockButton.ToolTip = _locked ? "解锁位置和大小" : "锁定位置和大小";
         if (_locked)
         {
-            Toolbar.Visibility = Visibility.Visible;
+            Toolbar.Visibility = Visibility.Collapsed;
             Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
+            ApplyExtendedStyles();
+            ShowUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
+        }
+        else
+        {
+            _unlockWindow?.Hide();
+            ApplyExtendedStyles();
+            Toolbar.Visibility = Visibility.Visible;
         }
         _controller.ShowTransient(_locked ? "歌词窗口已锁定" : "歌词窗口已解锁");
     }
 
-    private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    private void ShowUnlockWindow(double left, double top)
     {
-        if (message != WmNcHitTest || !_locked) return IntPtr.Zero;
-
-        var packed = lParam.ToInt64();
-        var screenX = unchecked((short)(packed & 0xFFFF));
-        var screenY = unchecked((short)((packed >> 16) & 0xFFFF));
-        var windowPoint = PointFromScreen(new System.Windows.Point(screenX, screenY));
-        var lockOrigin = LockButton.TranslatePoint(new System.Windows.Point(0, 0), this);
-        var lockHitArea = new Rect(lockOrigin.X - 4, lockOrigin.Y - 4,
-            LockButton.ActualWidth + 8, LockButton.ActualHeight + 8);
-
-        handled = true;
-        return lockHitArea.Contains(windowPoint) ? HtClient : HtTransparent;
+        _unlockWindow ??= new UnlockWindow(ToggleLock);
+        _unlockWindow.Left = left;
+        _unlockWindow.Top = top;
+        _unlockWindow.Topmost = Topmost;
+        if (!_unlockWindow.IsVisible) _unlockWindow.Show();
     }
 
     public void ToggleTopmost()
@@ -378,12 +378,27 @@ public partial class OverlayWindow : Window, IDisposable
     public void HideToTray()
     {
         SaveSettings();
+        _unlockWindow?.Hide();
         Hide();
+    }
+
+    public void ShowFromTray()
+    {
+        Show();
+        if (_locked)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                var origin = LockButton.TranslatePoint(new System.Windows.Point(-4, -4), this);
+                ShowUnlockWindow(Left + origin.X, Top + origin.Y);
+            });
+        }
     }
 
     public void RequestExit()
     {
         SaveSettings();
+        _unlockWindow?.Close();
         _allowClose = true;
         Close();
     }
@@ -393,13 +408,13 @@ public partial class OverlayWindow : Window, IDisposable
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
         var style = GetWindowLongPtr(handle, GwlExStyle).ToInt64() | WsExToolWindow;
-        style = _clickThrough ? style | WsExTransparent : style & ~WsExTransparent;
+        style = (_clickThrough || _locked) ? style | WsExTransparent : style & ~WsExTransparent;
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
     }
 
     public void Dispose()
     {
-        _hwndSource?.RemoveHook(WindowMessageHook);
+        _unlockWindow?.Close();
         _controller.Dispose();
     }
 

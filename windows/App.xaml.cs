@@ -21,7 +21,7 @@ public partial class App : System.Windows.Application
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("显示 / 隐藏", null, (_, _) => Dispatcher.Invoke(() =>
         {
-            if (_window.IsVisible) _window.HideToTray(); else _window.Show();
+            if (_window.IsVisible) _window.HideToTray(); else _window.ShowFromTray();
         }));
         var lockItem = new Forms.ToolStripMenuItem("锁定位置和大小") { CheckOnClick = false };
         lockItem.Click += (_, _) => Dispatcher.Invoke(() => _window.ToggleLock());
@@ -62,7 +62,7 @@ public partial class App : System.Windows.Application
         };
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(() =>
         {
-            if (_window.IsVisible) _window.HideToTray(); else _window.Show();
+            if (_window.IsVisible) _window.HideToTray(); else _window.ShowFromTray();
         });
     }
 
