@@ -16,7 +16,11 @@ public partial class OverlayWindow : Window, IDisposable
     private const int GwlExStyle = -20;
     private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
+    private const int WmNcHitTest = 0x0084;
+    private static readonly IntPtr HtTransparent = new(-1);
+    private static readonly IntPtr HtClient = new(1);
     private readonly MediaLyricsController _controller;
+    private HwndSource? _hwndSource;
     private bool _clickThrough;
     private bool _locked;
     private bool _allowClose;
@@ -72,6 +76,8 @@ public partial class OverlayWindow : Window, IDisposable
                 SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 70);
         }
         ApplyExtendedStyles();
+        _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        _hwndSource?.AddHook(WindowMessageHook);
         UpdateTypography();
     }
 
@@ -156,7 +162,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void Surface_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        Toolbar.Visibility = Visibility.Collapsed;
+        Toolbar.Visibility = _locked ? Visibility.Visible : Visibility.Collapsed;
         Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
     }
 
@@ -192,8 +198,27 @@ public partial class OverlayWindow : Window, IDisposable
         LockButton.Foreground = System.Windows.Media.Brushes.White;
         LockButton.ToolTip = _locked ? "解锁位置和大小" : "锁定位置和大小";
         if (_locked)
+        {
+            Toolbar.Visibility = Visibility.Visible;
             Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
+        }
         _controller.ShowTransient(_locked ? "歌词窗口已锁定" : "歌词窗口已解锁");
+    }
+
+    private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != WmNcHitTest || !_locked) return IntPtr.Zero;
+
+        var packed = lParam.ToInt64();
+        var screenX = unchecked((short)(packed & 0xFFFF));
+        var screenY = unchecked((short)((packed >> 16) & 0xFFFF));
+        var windowPoint = PointFromScreen(new System.Windows.Point(screenX, screenY));
+        var lockOrigin = LockButton.TranslatePoint(new System.Windows.Point(0, 0), this);
+        var lockHitArea = new Rect(lockOrigin.X - 4, lockOrigin.Y - 4,
+            LockButton.ActualWidth + 8, LockButton.ActualHeight + 8);
+
+        handled = true;
+        return lockHitArea.Contains(windowPoint) ? HtClient : HtTransparent;
     }
 
     public void ToggleTopmost()
@@ -372,7 +397,11 @@ public partial class OverlayWindow : Window, IDisposable
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
     }
 
-    public void Dispose() => _controller.Dispose();
+    public void Dispose()
+    {
+        _hwndSource?.RemoveHook(WindowMessageHook);
+        _controller.Dispose();
+    }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
