@@ -1,7 +1,7 @@
 # Apple Music Desktop Lyrics
 
 一个轻量的 Windows 桌面歌词伴侣：从 Windows 媒体会话读取 Apple Music 当前曲目，
-优先跟随 Apple Music 自带歌词的当前行，读取不到时从 LRCLIB 匹配同步歌词，并通过
+优先从 LRCLIB 匹配同步歌词，找不到时跟随 Apple Music 自带歌词的当前行，并通过
 透明置顶窗口显示。
 
 应用图标源文件位于 `assets/app-icon.png`，Windows 多尺寸图标位于 `assets/app.ico`。
@@ -42,10 +42,10 @@ Windows 专用实现，方便后续用 macOS 的媒体适配器和 AppKit/SwiftU
 偏移、选择本机已安装的精选字体，并浏览已加入的歌手/组合色板。默认字体保持
 Microsoft YaHei UI。歌词悬浮窗不提供管理入口，以减少误触。
 
-程序会在需要时通过 Windows UI Automation 自动打开 Apple Music 的歌词面板，读取其中
+LRCLIB 找不到同步歌词时，程序会通过 Windows UI Automation 自动打开 Apple Music 的歌词面板，读取其中
 AutomationId 为 `Line`（以及部分版本中的 `CurrentLine`）的公开文本元素。它不加载 Apple 私有 DLL，也不
-读取或保存 Apple 账户 Cookie/令牌。若当前 Apple Music 版本未暴露这些元素，程序会自动
-回退到 LRCLIB。
+读取或保存 Apple 账户 Cookie/令牌。该路径只在 LRCLIB 无结果时启用；若当前 Apple Music 版本
+未暴露这些元素，则显示未找到同步歌词。
 
 歌词窗口隐藏到托盘或退出时会保存当前位置和大小；下次启动自动恢复，并在显示器布局
 变化后将窗口限制在可见屏幕范围内。移动或缩放停止约 450 毫秒后也会自动保存，因此
@@ -65,7 +65,6 @@ dotnet publish -c Release -r win-x64 --self-contained true \
 
 ## 已知限制
 
-- Apple Music 没有稳定的公开桌面歌词 API；UI 自动化元素名称若在未来版本改变，会暂时
-  回退到 LRCLIB。
-- 后备同步歌词来自社区维护的 LRCLIB，个别歌曲可能缺失或匹配不准确。
+- Apple Music 没有稳定的公开桌面歌词 API；UI 自动化元素名称若在未来版本改变，官方后备读取可能失败。
+- 默认同步歌词来自社区维护的 LRCLIB，个别歌曲可能缺失或匹配不准确。
 - Windows 媒体会话有时会延迟更新约一秒，歌词进度也会相应有少量偏差。

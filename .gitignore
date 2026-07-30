@@ -4,6 +4,9 @@
 **/publish/
 **/publish-update/
 **/artifacts/
+**/.build/
+**/.swiftpm/
+macos/dist/
 .probe/
 
 # IDE and user state
