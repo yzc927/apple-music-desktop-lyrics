@@ -3,6 +3,8 @@
 一个轻量的 Windows 桌面歌词伴侣：从 Windows 媒体会话读取 Apple Music 当前曲目，
 从 LRCLIB 匹配同步歌词，并通过透明置顶窗口显示。
 
+应用图标源文件位于 `assets/app-icon.png`，Windows 多尺寸图标位于 `assets/app.ico`。
+
 ## 运行
 
 需要 Windows 10 1809 或更高版本，以及 .NET 10 Desktop Runtime。

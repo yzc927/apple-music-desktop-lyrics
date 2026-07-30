@@ -8,5 +8,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>AppleMusicDesktopLyrics</AssemblyName>
     <RootNamespace>AppleMusicDesktopLyrics</RootNamespace>
+    <ApplicationIcon>assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>
