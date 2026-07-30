@@ -87,7 +87,17 @@ internal static partial class ArtistColorEngine
         ["Rene Liu"] = ["#FFC98276"],
         ["林俊杰"] = ["#FF6757D9", "#FF4EA8DE"],
         ["林俊傑"] = ["#FF6757D9", "#FF4EA8DE"],
-        ["JJ LIN"] = ["#FF6757D9", "#FF4EA8DE"]
+        ["JJ LIN"] = ["#FF6757D9", "#FF4EA8DE"],
+        ["水樹奈々"] = ["#FF4169E1", "#FFC54BCE"],
+        ["米津玄師"] = ["#FF6477B9"],
+        ["初音ミク"] = ["#FF39C5BB"],
+        ["Hatsune Miku"] = ["#FF39C5BB"],
+        ["doriko"] = ["#FFD966A6"],
+        ["Omoinotake"] = ["#FFE45756", "#FFF2A65A"],
+        ["竹達彩奈"] = ["#FFFF8FA3"],
+        ["今井麻美"] = ["#FF5967C9"],
+        ["松本梨香"] = ["#FFE6503C"],
+        ["山崎まさよし"] = ["#FFC68A4A"]
     };
 
     private static readonly string[] Fallback =
