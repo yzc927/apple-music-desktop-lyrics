@@ -2,7 +2,9 @@
 **/bin/
 **/obj/
 **/publish/
+**/publish-update/
 **/artifacts/
+.probe/
 
 # IDE and user state
 .vs/

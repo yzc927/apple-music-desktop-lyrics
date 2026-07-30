@@ -71,7 +71,7 @@ internal static partial class ArtistColorEngine
         ["范玮琪"] = ["#FFB58BD8"],
         ["范瑋琪"] = ["#FFB58BD8"],
         ["JUVENILE"] = ["#FF45CFF1"],
-        ["Liyuu"] = ["#FFFF7FBF"],
+        ["Liyuu"] = ["#FF4D9CFF", "#FF63C7FF"],
         ["王力宏"] = ["#FF3C78D8", "#FFD4A64A"],
         ["Wang Leehom"] = ["#FF3C78D8", "#FFD4A64A"],
         ["ワン・リーホン"] = ["#FF3C78D8", "#FFD4A64A"],

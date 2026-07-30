@@ -34,6 +34,7 @@ public partial class OverlayWindow : Window, IDisposable
     private readonly RectangleGeometry _highlightClip = new();
     private System.Windows.Media.Color _highlightColor = System.Windows.Media.Color.FromRgb(255, 59, 48);
     private bool _autoColor;
+    private string _fontFamily = "Microsoft YaHei UI";
     private string _lastArtist = "";
     private bool _hasSavedPlacement;
     private static readonly (string Name, string Hex)[] ColorPalette =
@@ -52,6 +53,8 @@ public partial class OverlayWindow : Window, IDisposable
     public bool IsAutoColor => _autoColor;
     public string CurrentArtist => _lastArtist;
     public double CurrentOffsetSeconds => _controller.OffsetSeconds;
+    public string CurrentFontFamily => _fontFamily;
+    public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
     public OverlayWindow()
     {
@@ -386,6 +389,47 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void ResetLyricsOffset() => _controller.ResetOffset();
 
+    public void SetFontFamily(string familyName)
+    {
+        if (!GetAvailableFonts().Any(item =>
+                string.Equals(item.FamilyName, familyName, StringComparison.OrdinalIgnoreCase))) return;
+        _fontFamily = familyName;
+        ApplyFontFamily();
+        SaveSettings();
+        _controller.ShowTransient($"已切换字体：{GetAvailableFonts().First(item =>
+            string.Equals(item.FamilyName, familyName, StringComparison.OrdinalIgnoreCase)).DisplayName}");
+    }
+
+    private void ApplyFontFamily()
+    {
+        var family = new System.Windows.Media.FontFamily(_fontFamily);
+        CurrentLine.FontFamily = family;
+        CurrentHighlightLine.FontFamily = family;
+        NextLine.FontFamily = family;
+        UpdateHighlightMetrics();
+        UpdateHighlightClip();
+    }
+
+    private static IReadOnlyList<FontChoice> GetAvailableFonts()
+    {
+        var installed = System.Windows.Media.Fonts.SystemFontFamilies
+            .Select(font => font.Source)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        FontChoice[] curated =
+        [
+            new("默认（微软雅黑 UI）", "Microsoft YaHei UI"),
+            new("微软雅黑", "Microsoft YaHei"),
+            new("等线", "DengXian"),
+            new("Segoe UI", "Segoe UI"),
+            new("游ゴシック UI", "Yu Gothic UI"),
+            new("メイリオ", "Meiryo"),
+            new("思源黑体", "Source Han Sans SC"),
+            new("Noto Sans CJK", "Noto Sans CJK SC"),
+            new("霞鹜文楷", "LXGW WenKai")
+        ];
+        return curated.Where(item => installed.Contains(item.FamilyName)).ToArray();
+    }
+
     private void LoadSettings()
     {
         try
@@ -397,6 +441,10 @@ public partial class OverlayWindow : Window, IDisposable
             if (converted is not System.Windows.Media.Color color) return;
             _highlightColor = color;
             _autoColor = settings.AutoColor;
+            if (!string.IsNullOrWhiteSpace(settings.FontFamily) && GetAvailableFonts().Any(item =>
+                    string.Equals(item.FamilyName, settings.FontFamily, StringComparison.OrdinalIgnoreCase)))
+                _fontFamily = settings.FontFamily;
+            ApplyFontFamily();
             CurrentHighlightLine.Foreground = new SolidColorBrush(color);
             ColorButton.Foreground = new SolidColorBrush(color);
             AutoColorButton.Foreground = _autoColor
@@ -424,13 +472,15 @@ public partial class OverlayWindow : Window, IDisposable
             File.WriteAllText(_settingsPath, JsonSerializer.Serialize(
                 new OverlaySettings(_highlightColor.ToString(), _autoColor,
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
-                    IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null)));
+                    IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
+                    _fontFamily)));
         }
         catch { }
     }
 
     private sealed record OverlaySettings(string HighlightColor, bool AutoColor = false,
-        double? Left = null, double? Top = null, double? Width = null, double? Height = null);
+        double? Left = null, double? Top = null, double? Width = null, double? Height = null,
+        string? FontFamily = null);
 
     public void ToggleClickThrough()
     {
@@ -505,3 +555,5 @@ public partial class OverlayWindow : Window, IDisposable
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr value);
 }
+
+public sealed record FontChoice(string DisplayName, string FamilyName);
