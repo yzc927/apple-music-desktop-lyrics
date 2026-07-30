@@ -9,6 +9,8 @@ struct SettingsSnapshot: Codable {
     var manualColor = "#FF55B8FF"
     var fontFamily = "PingFang SC"
     var songOffsets: [String: Double] = [:]
+    var automaticLyricsCalibration: Bool?
+    var karaokeMode: Bool?
 }
 
 @MainActor
@@ -22,9 +24,17 @@ final class AppSettings: ObservableObject {
     @Published var autoColor = true { didSet { save() } }
     @Published var manualColor = "#FF55B8FF" { didSet { save() } }
     @Published var fontFamily = "PingFang SC" { didSet { save() } }
+    @Published var automaticLyricsCalibration = false { didSet { save() } }
+    @Published var karaokeMode = false { didSet { save() } }
     @Published private(set) var songOffsets: [String: Double] = [:]
+    private var lyricChoices: [String: String] = [:]
+    private let lyricChoicesKey = "AppleMusicDesktopLyricsMac.lyricsChoices.v1"
 
     private init() {
+        if let choicesData = defaults.data(forKey: lyricChoicesKey),
+           let choices = try? JSONDecoder().decode([String: String].self, from: choicesData) {
+            lyricChoices = choices
+        }
         guard let data = defaults.data(forKey: key),
               let snapshot = try? JSONDecoder().decode(SettingsSnapshot.self, from: data) else { return }
         locked = snapshot.locked
@@ -33,6 +43,8 @@ final class AppSettings: ObservableObject {
         manualColor = snapshot.manualColor
         fontFamily = snapshot.fontFamily
         songOffsets = snapshot.songOffsets
+        automaticLyricsCalibration = snapshot.automaticLyricsCalibration ?? false
+        karaokeMode = snapshot.karaokeMode ?? false
     }
 
     func offset(for songKey: String) -> Double { songOffsets[songKey] ?? 0 }
@@ -50,6 +62,14 @@ final class AppSettings: ObservableObject {
         save()
     }
 
+    func lyricChoice(for songKey: String) -> String? { lyricChoices[songKey] }
+
+    func setLyricChoice(_ candidateKey: String, for songKey: String) {
+        guard !songKey.isEmpty, !candidateKey.isEmpty else { return }
+        lyricChoices[songKey] = candidateKey
+        if let data = try? JSONEncoder().encode(lyricChoices) { defaults.set(data, forKey: lyricChoicesKey) }
+    }
+
     var curatedFonts: [String] {
         let preferred = [
             "PingFang SC", "Hiragino Sans GB", "Hiragino Kaku Gothic ProN",
@@ -63,7 +83,9 @@ final class AppSettings: ObservableObject {
     private func save() {
         let snapshot = SettingsSnapshot(
             locked: locked, alwaysOnTop: alwaysOnTop, autoColor: autoColor,
-            manualColor: manualColor, fontFamily: fontFamily, songOffsets: songOffsets
+            manualColor: manualColor, fontFamily: fontFamily, songOffsets: songOffsets,
+            automaticLyricsCalibration: automaticLyricsCalibration,
+            karaokeMode: karaokeMode
         )
         if let data = try? JSONEncoder().encode(snapshot) { defaults.set(data, forKey: key) }
     }

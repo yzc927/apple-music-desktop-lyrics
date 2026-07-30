@@ -14,6 +14,11 @@
             MouseEnter="Surface_MouseEnter" MouseLeave="Surface_MouseLeave"
             MouseLeftButtonDown="Surface_MouseLeftButtonDown">
         <Grid>
+            <!-- Keep the window's full hit area, but only tint a compact band behind
+                 the lyrics.  This preserves the saved window size and font scale. -->
+            <Border x:Name="HoverBackdrop" CornerRadius="14" Background="Transparent"
+                    VerticalAlignment="Center" Height="72" IsHitTestVisible="False" />
+
             <StackPanel Margin="24,38,24,14" VerticalAlignment="Center">
                 <Grid>
                     <TextBlock x:Name="CurrentLine" Text="正在等待 Apple Music…"
@@ -48,12 +53,12 @@
             </Border>
 
             <StackPanel x:Name="Toolbar" Visibility="Collapsed" Orientation="Horizontal"
-                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,7,9,0">
+                        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0">
                 <StackPanel.Resources>
                     <Style TargetType="Button">
                         <Setter Property="Width" Value="34" />
                         <Setter Property="Height" Value="27" />
-                        <Setter Property="Margin" Value="3,0,0,0" />
+                        <Setter Property="Margin" Value="0" />
                         <Setter Property="Foreground" Value="White" />
                         <Setter Property="Background" Value="#80000000" />
                         <Setter Property="BorderThickness" Value="0" />
@@ -103,13 +108,21 @@
                 <Button x:Name="AutoColorButton" ToolTip="按歌手自动配色" Click="AutoColorButton_Click">
                     <Viewbox Width="17" Height="17"><Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M12,1 L14,7 L20,9 L14,11 L12,17 L10,11 L4,9 L10,7 Z M19,14 L20.2,17.8 L24,19 L20.2,20.2 L19,24 L17.8,20.2 L14,19 L17.8,17.8 Z M4,14 L4.8,16.2 L7,17 L4.8,17.8 L4,20 L3.2,17.8 L1,17 L3.2,16.2 Z" /></Viewbox>
                 </Button>
+                <Button x:Name="LyricsModeButton" ToolTip="切换为卡拉 OK 模式" Click="LyricsModeButton_Click">
+                    <Viewbox Width="18" Height="18">
+                        <Path x:Name="LyricsModeIcon" Stroke="White" StrokeThickness="2.2"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round" Fill="Transparent"
+                              Data="M4,6 H20 M4,12 H20 M4,18 H15" />
+                    </Viewbox>
+                </Button>
                 <Button x:Name="CloseButton" ToolTip="隐藏到系统托盘" Click="CloseButton_Click">
                     <Viewbox Width="15" Height="15"><Path Fill="White" Data="M5,4 L12,11 L19,4 L20,5 L13,12 L20,19 L19,20 L12,13 L5,20 L4,19 L11,12 L4,5 Z" /></Viewbox>
                 </Button>
             </StackPanel>
 
-            <ResizeGrip x:Name="Grip" Width="20" Height="20" Margin="0,0,4,4"
-                        HorizontalAlignment="Right" VerticalAlignment="Bottom"
+            <ResizeGrip x:Name="Grip" Width="20" Height="20" Margin="0,0,4,0"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
                         Foreground="White" Opacity="0.65" />
         </Grid>
     </Border>

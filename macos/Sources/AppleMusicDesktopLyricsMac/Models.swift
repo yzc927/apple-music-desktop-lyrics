@@ -39,5 +39,7 @@ final class LyricsDisplayState: ObservableObject {
     @Published var progress = 0.0
     @Published var source: LyricsSource = .waiting
     @Published var isPlaying = false
+    @Published var lyricVersion = "自动匹配"
+    @Published var lyricVersionPosition = ""
     @Published var toast: String?
 }

@@ -12,8 +12,8 @@ internal static partial class ArtistColorEngine
 {
     private static readonly Dictionary<string, string[]> Curated = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["さくらみこ"] = ["#FFFF7EB6"],
-        ["miComet"] = ["#FFFF7EB6", "#FF55B8FF"],
+        ["さくらみこ"] = ["#FFF25F7C"],
+        ["miComet"] = ["#FFF25F7C", "#FF55B8FF"],
         ["Da-iCE"] = ["#FFFF6B5E"],
         ["大原櫻子"] = ["#FFFF7096"],
         ["星街すいせい"] = ["#FF55B8FF"],
@@ -105,14 +105,22 @@ internal static partial class ArtistColorEngine
     ];
 
     private static readonly IReadOnlyDictionary<string, string[]> CuratedByNormalizedName = Curated
+        .Concat(AdditionalArtistColors.Palettes)
         .GroupBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal);
 
-    public static ArtistPalette Resolve(string rawArtist)
+    public static ArtistPalette Resolve(string rawArtist, string? unknownArtistColor = null)
     {
         var identity = StripAlbum(rawArtist).Trim();
         if (string.IsNullOrWhiteSpace(identity))
-            return new ArtistPalette("Unknown", [Fallback[0]]);
+            return new ArtistPalette("Unknown", [unknownArtistColor ?? Fallback[0]]);
+
+        // Apple Music often credits character songs as "Character (CV.Actor)".
+        // The performer after CV owns the palette; the fictional character prefix
+        // is display metadata rather than a stable artist identity.
+        var voiceActor = VoiceActorCredit().Match(identity);
+        if (voiceActor.Success)
+            identity = voiceActor.Groups["actors"].Value.Trim();
 
         // Known groups are resolved before splitting. This lets a group own a
         // deliberate signature gradient without pretending its name lists members.
@@ -125,22 +133,24 @@ internal static partial class ArtistColorEngine
             .Take(3).ToArray();
         if (artists.Length > 1)
         {
-            var colors = artists.Select(ResolveSingle).ToArray();
+            var colors = artists.Select(artist => ResolveSingle(artist, unknownArtistColor)).ToArray();
             return new ArtistPalette(string.Join(" × ", artists), colors);
         }
 
-        return new ArtistPalette(identity, [ResolveSingle(identity)]);
+        return new ArtistPalette(identity, [ResolveSingle(identity, unknownArtistColor)]);
     }
 
     public static IReadOnlyList<ArtistPalette> GetCuratedPalettes() => Curated
+        .Concat(AdditionalArtistColors.Palettes)
         .DistinctBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .OrderBy(item => item.Key, StringComparer.CurrentCultureIgnoreCase)
         .Select(item => new ArtistPalette(item.Key, item.Value))
         .ToArray();
 
-    private static string ResolveSingle(string artist)
+    private static string ResolveSingle(string artist, string? unknownArtistColor)
     {
         if (TryGetCurated(artist, out var curated)) return curated[0];
+        if (!string.IsNullOrWhiteSpace(unknownArtistColor)) return unknownArtistColor;
         uint hash = 2166136261;
         foreach (var character in NormalizeArtistKey(artist))
             hash = (hash ^ character) * 16777619;
@@ -163,6 +173,9 @@ internal static partial class ArtistColorEngine
         return value;
     }
 
-    [GeneratedRegex(@"\s+(?:&|＆|×|feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\s*(?:&|＆|×)\s*|\s+(?:feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*", RegexOptions.IgnoreCase)]
     private static partial Regex CollaborationSeparator();
+
+    [GeneratedRegex(@"[\(（]\s*CV\s*[\.:：．]?\s*(?<actors>[^\)）]+)[\)）]", RegexOptions.IgnoreCase)]
+    private static partial Regex VoiceActorCredit();
 }

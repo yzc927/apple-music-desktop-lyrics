@@ -19,6 +19,7 @@ public partial class OverlayWindow : Window, IDisposable
     private const int WsExToolWindow = 0x80;
     private readonly MediaLyricsController _controller;
     private readonly DispatcherTimer _lockedHoverTimer;
+    private readonly DispatcherTimer _unlockedHitTestTimer;
     private readonly DispatcherTimer _placementSaveTimer;
     private UnlockWindow? _unlockWindow;
     private DateTimeOffset? _lockedHoverStartedAt;
@@ -27,6 +28,7 @@ public partial class OverlayWindow : Window, IDisposable
     private double _unlockTop;
     private bool _clickThrough;
     private bool _locked;
+    private bool _outsideInteractiveRegion;
     private bool _allowClose;
     private double _highlightProgress;
     private double _highlightTextStart;
@@ -34,6 +36,8 @@ public partial class OverlayWindow : Window, IDisposable
     private readonly RectangleGeometry _highlightClip = new();
     private System.Windows.Media.Color _highlightColor = System.Windows.Media.Color.FromRgb(255, 59, 48);
     private bool _autoColor;
+    private bool _automaticLyricsCalibration;
+    private bool _karaokeMode;
     private string _fontFamily = "Microsoft YaHei UI";
     private string _lastArtist = "";
     private bool _hasSavedPlacement;
@@ -52,9 +56,15 @@ public partial class OverlayWindow : Window, IDisposable
     public bool IsPinned => Topmost;
     public bool IsClickThrough => _clickThrough;
     public bool IsAutoColor => _autoColor;
+    public bool IsAutomaticLyricsCalibration => _automaticLyricsCalibration;
+    public bool IsKaraokeMode => _karaokeMode;
     public string CurrentArtist => _lastArtist;
+    public string FallbackHighlightColor => _highlightColor.ToString();
     public double CurrentOffsetSeconds => _controller.OffsetSeconds;
     public string CurrentLyricsSource => _controller.LyricsSource;
+    public int LyricsCandidateCount => _controller.LyricsCandidateCount;
+    public int LyricsCandidateIndex => _controller.LyricsCandidateIndex;
+    public string LyricsCandidateLabel => _controller.LyricsCandidateLabel;
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
@@ -69,11 +79,14 @@ public partial class OverlayWindow : Window, IDisposable
         };
         _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
             DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
+        _unlockedHitTestTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50),
+            DispatcherPriority.Input, (_, _) => TrackUnlockedPointer(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
         Loaded += OnLoaded;
         LocationChanged += (_, _) => SchedulePlacementSave();
         SizeChanged += (_, _) =>
         {
+            UpdateHoverBackdrop();
             UpdateTypography();
             UpdateHighlightMetrics();
             UpdateHighlightClip();
@@ -81,6 +94,7 @@ public partial class OverlayWindow : Window, IDisposable
         };
         LoadSettings();
         _controller = new MediaLyricsController(SetLines, ShowToast);
+        _controller.SetAutomaticCalibration(_automaticLyricsCalibration, notify: false);
         _controller.Start();
     }
 
@@ -110,6 +124,8 @@ public partial class OverlayWindow : Window, IDisposable
         ApplyLockState(_locked, notify: false, persist: false);
         ApplyExtendedStyles();
         UpdateTypography();
+        UpdateLyricsModeIcon();
+        _unlockedHitTestTimer.Start();
         SaveSettings();
     }
 
@@ -122,6 +138,7 @@ public partial class OverlayWindow : Window, IDisposable
         CurrentLine.FontSize = 30 * scale;
         CurrentHighlightLine.FontSize = 30 * scale;
         NextLine.FontSize = 19 * scale;
+        ScheduleToolbarPlacement();
     }
 
     private void SetLines(string current, string next, double progress, string artist)
@@ -160,8 +177,9 @@ public partial class OverlayWindow : Window, IDisposable
     private void UpdateHighlightClip()
     {
         if (!IsLoaded || CurrentHighlightLine.ActualWidth <= 0) return;
+        var visibleProgress = _karaokeMode ? _highlightProgress : 1d;
         _highlightClip.Rect = new Rect(_highlightTextStart, 0,
-            _highlightTextWidth * _highlightProgress, Math.Max(1, CurrentHighlightLine.ActualHeight));
+            _highlightTextWidth * visibleProgress, Math.Max(1, CurrentHighlightLine.ActualHeight));
     }
 
     private void ShowToast(string message)
@@ -198,14 +216,79 @@ public partial class OverlayWindow : Window, IDisposable
     private void Surface_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         Toolbar.Visibility = Visibility.Visible;
-        Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(
+        ScheduleToolbarPlacement();
+        HoverBackdrop.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(
             _locked ? (byte)1 : (byte)64, 0, 0, 0));
     }
 
     private void Surface_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         Toolbar.Visibility = Visibility.Collapsed;
-        Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
+        HoverBackdrop.Background = System.Windows.Media.Brushes.Transparent;
+    }
+
+    private void UpdateHoverBackdrop()
+    {
+        // The former backdrop filled the entire overlay.  A 46% band is less than
+        // half as tall while leaving enough room for two lyric rows at minimum size.
+        var backdropHeight = Math.Max(54, ActualHeight * 0.46);
+        HoverBackdrop.Height = backdropHeight;
+        var backdropTop = Math.Max(0, (ActualHeight - backdropHeight) / 2);
+        Grip.Margin = new Thickness(0, backdropTop + backdropHeight - Grip.Height - 4, 4, 0);
+    }
+
+    private Rect InteractiveRegion()
+    {
+        var height = Math.Max(54, ActualHeight * 0.46);
+        return new Rect(0, Math.Max(0, (ActualHeight - height) / 2), ActualWidth, height);
+    }
+
+    private void TrackUnlockedPointer()
+    {
+        if (!IsLoaded || !IsVisible) return;
+        if (_locked || _clickThrough)
+        {
+            if (_outsideInteractiveRegion)
+            {
+                _outsideInteractiveRegion = false;
+                ApplyExtendedStyles();
+            }
+            return;
+        }
+
+        var cursor = System.Windows.Forms.Cursor.Position;
+        var local = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
+        var outside = !InteractiveRegion().Contains(local);
+        if (outside == _outsideInteractiveRegion) return;
+
+        _outsideInteractiveRegion = outside;
+        if (outside)
+        {
+            Toolbar.Visibility = Visibility.Collapsed;
+            HoverBackdrop.Background = System.Windows.Media.Brushes.Transparent;
+        }
+        else
+        {
+            Toolbar.Visibility = Visibility.Visible;
+            ScheduleToolbarPlacement();
+            HoverBackdrop.Background = new SolidColorBrush(
+                System.Windows.Media.Color.FromArgb(64, 0, 0, 0));
+        }
+        ApplyExtendedStyles();
+    }
+
+    private void ScheduleToolbarPlacement()
+    {
+        if (!IsLoaded) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (!IsLoaded || Toolbar.Visibility != Visibility.Visible) return;
+            var lyricTop = CurrentLine.TransformToAncestor(Surface)
+                .Transform(new System.Windows.Point()).Y;
+            var toolbarHeight = Toolbar.ActualHeight > 0 ? Toolbar.ActualHeight : 27;
+            // Touch the current lyric's top edge: no floating gap, no overlap.
+            Toolbar.Margin = new Thickness(0, Math.Max(0, lyricTop - toolbarHeight), 0, 0);
+        });
     }
 
     private void LockButton_Click(object sender, RoutedEventArgs e) => ToggleLock();
@@ -215,6 +298,8 @@ public partial class OverlayWindow : Window, IDisposable
     private void ColorButton_Click(object sender, RoutedEventArgs e) => ChooseHighlightColor();
 
     private void AutoColorButton_Click(object sender, RoutedEventArgs e) => ToggleAutoColor();
+
+    private void LyricsModeButton_Click(object sender, RoutedEventArgs e) => ToggleKaraokeMode();
 
     private void SlowButton_Click(object sender, RoutedEventArgs e) => AdjustLyrics(-0.5);
 
@@ -238,6 +323,7 @@ public partial class OverlayWindow : Window, IDisposable
         PinButton.Visibility = unlockedVisibility;
         ColorButton.Visibility = unlockedVisibility;
         AutoColorButton.Visibility = unlockedVisibility;
+        LyricsModeButton.Visibility = unlockedVisibility;
         CloseButton.Visibility = unlockedVisibility;
         LockIcon.Data = Geometry.Parse(_locked
             ? "M7,11 V7 C7,3.7 9.2,1 12,1 C14.8,1 17,3.7 17,7 V11 M5,11 H19 V22 H5 Z M12,15 V18"
@@ -247,7 +333,7 @@ public partial class OverlayWindow : Window, IDisposable
         if (_locked)
         {
             Toolbar.Visibility = Visibility.Collapsed;
-            Surface.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(1, 0, 0, 0));
+            HoverBackdrop.Background = System.Windows.Media.Brushes.Transparent;
             ApplyExtendedStyles();
             if (IsLoaded)
                 PrepareUnlockWindow(Left + unlockOrigin.X, Top + unlockOrigin.Y);
@@ -336,26 +422,33 @@ public partial class OverlayWindow : Window, IDisposable
                 Fill = new SolidColorBrush(color)
             });
             panel.Children.Add(new System.Windows.Controls.TextBlock { Text = name });
-            var item = new System.Windows.Controls.MenuItem { Header = panel };
-            item.Click += (_, _) => SetHighlightColor(color, false);
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = panel,
+                IsCheckable = true,
+                IsChecked = color == _highlightColor
+            };
+            item.Click += (_, _) => SetFallbackColor(color);
             menu.Items.Add(item);
         }
         menu.IsOpen = true;
     }
 
-    private void SetHighlightColor(System.Windows.Media.Color color, bool automatic)
+    private void SetFallbackColor(System.Windows.Media.Color color)
     {
         _highlightColor = color;
-        _autoColor = automatic;
-        ApplyHighlightBrush(new SolidColorBrush(_highlightColor), _highlightColor, automatic);
+        if (_autoColor) ApplyAutomaticColor(_lastArtist);
+        else ApplyHighlightBrush(new SolidColorBrush(_highlightColor), _highlightColor, false);
+        _controller.ShowTransient(_autoColor ? "已更改未收录歌手的后备颜色" : "已更改歌词颜色");
     }
 
     private void ApplyHighlightBrush(System.Windows.Media.Brush brush, System.Windows.Media.Color representative, bool automatic)
     {
-        _highlightColor = representative;
         _autoColor = automatic;
         CurrentHighlightLine.Foreground = brush;
-        ColorButton.Foreground = new SolidColorBrush(representative);
+        // The palette button always represents the user's persistent manual/fallback
+        // choice. Automatic artist colors only change the active lyric brush.
+        ColorButton.Foreground = new SolidColorBrush(_highlightColor);
         AutoColorButton.Foreground = automatic
             ? new SolidColorBrush(representative)
             : System.Windows.Media.Brushes.White;
@@ -369,15 +462,14 @@ public partial class OverlayWindow : Window, IDisposable
         if (_autoColor) ApplyAutomaticColor(_lastArtist);
         else
         {
-            AutoColorButton.Foreground = System.Windows.Media.Brushes.White;
-            SaveSettings();
+            ApplyHighlightBrush(new SolidColorBrush(_highlightColor), _highlightColor, false);
         }
         _controller.ShowTransient(_autoColor ? "已开启按歌手自动配色" : "已关闭自动配色");
     }
 
     private void ApplyAutomaticColor(string artist)
     {
-        var palette = ArtistColorEngine.Resolve(artist);
+        var palette = ArtistColorEngine.Resolve(artist, _highlightColor.ToString());
         var colors = palette.Colors.Select(hex =>
             (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex)).ToArray();
         if (colors.Length == 1)
@@ -400,6 +492,34 @@ public partial class OverlayWindow : Window, IDisposable
     public void AdjustLyrics(double seconds) => _controller.AdjustOffset(seconds);
 
     public void ResetLyricsOffset() => _controller.ResetOffset();
+
+    public void ChangeLyricsCandidate(int delta) => _controller.ChangeLyricsCandidate(delta);
+
+    public void ToggleAutomaticLyricsCalibration()
+    {
+        _automaticLyricsCalibration = !_automaticLyricsCalibration;
+        _controller.SetAutomaticCalibration(_automaticLyricsCalibration);
+        SaveSettings();
+    }
+
+    public void ToggleKaraokeMode()
+    {
+        _karaokeMode = !_karaokeMode;
+        UpdateHighlightClip();
+        UpdateLyricsModeIcon();
+        SaveSettings();
+        _controller.ShowTransient(_karaokeMode ? "卡拉 OK 扫色模式" : "普通整句模式");
+    }
+
+    private void UpdateLyricsModeIcon()
+    {
+        LyricsModeIcon.Data = Geometry.Parse(_karaokeMode
+            ? "M12,3 C9.8,3 8,4.8 8,7 V11 C8,13.2 9.8,15 12,15 C14.2,15 16,13.2 16,11 V7 C16,4.8 14.2,3 12,3 M5,11 C5,15 8,18 12,18 C16,18 19,15 19,11 M12,18 V22 M8,22 H16"
+            : "M4,6 H20 M4,12 H20 M4,18 H15");
+        LyricsModeButton.ToolTip = _karaokeMode
+            ? "当前为卡拉 OK 模式；点击切换为普通模式"
+            : "当前为普通模式；点击切换为卡拉 OK 模式";
+    }
 
     public void SetFontFamily(string familyName)
     {
@@ -451,6 +571,8 @@ public partial class OverlayWindow : Window, IDisposable
             if (settings is null) return;
 
             _autoColor = settings.AutoColor;
+            _automaticLyricsCalibration = settings.AutomaticLyricsCalibration;
+            _karaokeMode = settings.KaraokeMode;
             _locked = settings.Locked;
             Topmost = settings.AlwaysOnTop;
             _clickThrough = settings.ClickThrough;
@@ -501,7 +623,8 @@ public partial class OverlayWindow : Window, IDisposable
                 new OverlaySettings(_highlightColor.ToString(), _autoColor,
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
-                    _fontFamily, _locked, Topmost, _clickThrough));
+                    _fontFamily, _locked, Topmost, _clickThrough, _automaticLyricsCalibration,
+                    _karaokeMode));
             var temporaryPath = _settingsPath + ".tmp";
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, _settingsPath, true);
@@ -512,7 +635,8 @@ public partial class OverlayWindow : Window, IDisposable
     private sealed record OverlaySettings(string HighlightColor, bool AutoColor = false,
         double? Left = null, double? Top = null, double? Width = null, double? Height = null,
         string? FontFamily = null, bool Locked = false, bool AlwaysOnTop = true,
-        bool ClickThrough = false);
+        bool ClickThrough = false, bool AutomaticLyricsCalibration = false,
+        bool KaraokeMode = false);
 
     public void ToggleClickThrough()
     {
@@ -536,6 +660,7 @@ public partial class OverlayWindow : Window, IDisposable
     {
         SaveSettings();
         _lockedHoverTimer.Stop();
+        _unlockedHitTestTimer.Stop();
         _lockedHoverStartedAt = null;
         _unlockRequestedVisible = false;
         _unlockWindow?.HideImmediately();
@@ -545,6 +670,7 @@ public partial class OverlayWindow : Window, IDisposable
     public void ShowFromTray()
     {
         Show();
+        _unlockedHitTestTimer.Start();
         if (_locked)
         {
             Dispatcher.BeginInvoke(() =>
@@ -571,7 +697,9 @@ public partial class OverlayWindow : Window, IDisposable
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
         var style = GetWindowLongPtr(handle, GwlExStyle).ToInt64() | WsExToolWindow;
-        style = (_clickThrough || _locked) ? style | WsExTransparent : style & ~WsExTransparent;
+        style = (_clickThrough || _locked || _outsideInteractiveRegion)
+            ? style | WsExTransparent
+            : style & ~WsExTransparent;
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
     }
 
@@ -580,6 +708,7 @@ public partial class OverlayWindow : Window, IDisposable
         SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
+        _unlockedHitTestTimer.Stop();
         _unlockWindow?.Close();
         _controller.Dispose();
     }

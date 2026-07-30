@@ -90,8 +90,32 @@ final class OverlayWindowController: NSObject, NSWindowDelegate {
 
     private func startHoverTracking() {
         hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [controller = self] _ in
-            Task { @MainActor in controller.updateUnlockHover() }
+            Task { @MainActor in
+                controller.updatePointerHitTesting()
+                controller.updateUnlockHover()
+            }
         }
+    }
+
+    private func updatePointerHitTesting() {
+        guard panel.isVisible else { return }
+        if settings.locked {
+            panel.ignoresMouseEvents = true
+            return
+        }
+
+        let frame = panel.frame
+        let cursor = NSEvent.mouseLocation
+        let bandHeight = max(54, frame.height * 0.46)
+        let band = NSRect(x: frame.minX, y: frame.midY - bandHeight / 2,
+                          width: frame.width, height: bandHeight)
+        // Keep only a tiny edge strip for native resizing; every other transparent
+        // area passes clicks to the application underneath.
+        let edge: CGFloat = 6
+        let nearResizeEdge = frame.contains(cursor) &&
+            (cursor.x <= frame.minX + edge || cursor.x >= frame.maxX - edge ||
+             cursor.y <= frame.minY + edge || cursor.y >= frame.maxY - edge)
+        panel.ignoresMouseEvents = !(band.contains(cursor) || nearResizeEdge)
     }
 
     private func updateUnlockHover() {

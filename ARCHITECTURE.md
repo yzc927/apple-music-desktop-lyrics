@@ -3,13 +3,16 @@
 ## Data flow
 
 1. A platform playback adapter reads the current Apple Music track and timeline.
-2. `LyricsClient` first searches LRCLIB using title, artist, album, and duration, and
-   `LrcParser` builds the preferred timestamped lyric timeline.
+2. `LyricsClient` searches LRCLIB using title, artist, album, and duration, rejects weak
+   recording matches, and keeps up to eight deduplicated synchronized candidates.
 3. If LRCLIB has no synchronized lyrics, `AppleMusicUiLyricsProvider` reads Apple Music's
    public UI Automation lyric elements as a fallback. It uses `CurrentLine` when available
    and the virtualized visible `Line` sequence used by newer Apple Music builds otherwise.
-4. The controller applies per-track timing corrections and guards against small timeline regressions.
-5. The native overlay renders current/next lines, progress fill, fonts, notifications, and artist palettes.
+4. When explicitly enabled, matching Apple line transitions can provide a read-only calibration
+   signal without replacing LRCLIB; the default stable path does not mix the two clocks.
+5. The controller combines a monotonic playback clock, per-track manual correction, bounded
+   automatic calibration, seek detection, and language-aware active-line duration estimation.
+6. The native overlay renders current/next lines, progress fill, fonts, notifications, and artist palettes.
 
 ## Platform boundaries
 
@@ -28,8 +31,9 @@ Windows currently stores settings under `%LocalAppData%\AppleMusicDesktopLyrics`
 
 - `settings.json`: overlay position, size, color mode, and selected font.
 - `song-offsets.json`: per-recording lyric timing corrections.
+- `lyrics-choices.json`: the user's selected LRCLIB candidate for each recording.
 
 These files are not part of the repository and are excluded from source control.
 
-macOS uses `UserDefaults` for overlay settings, per-song offsets, font and color choices. The native panel frame is
+macOS uses `UserDefaults` for overlay settings, per-song offsets, lyric candidates, font and color choices. The native panel frame is
 stored with `NSStringFromRect`; invalid off-screen frames are ignored when the connected display layout changes.

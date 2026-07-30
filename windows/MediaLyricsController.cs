@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Threading;
 using Windows.Media.Control;
 
@@ -10,16 +11,19 @@ internal sealed class MediaLyricsController : IDisposable
     private readonly LyricsClient _lyricsClient = new();
     private readonly AppleMusicUiLyricsProvider _appleLyrics = new();
     private readonly SongOffsetStore _offsetStore = new();
+    private readonly SongLyricsChoiceStore _choiceStore = new();
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _applePollTimer;
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
     private IReadOnlyList<LyricLine> _lines = [];
+    private IReadOnlyList<LyricsCandidate> _candidates = [];
+    private int _candidateIndex = -1;
     private string _mediaKey = "";
     private string _title = "";
     private TimeSpan _clockPosition;
-    private DateTimeOffset _clockUpdatedAt;
+    private long _clockUpdatedTicks;
     private TimeSpan _clockCorrection;
     private bool _clockInitialized;
     private bool _clockPlaying;
@@ -27,6 +31,10 @@ internal sealed class MediaLyricsController : IDisposable
     private bool _polling;
     private string _artist = "";
     private TimeSpan _lyricsOffset;
+    private TimeSpan _automaticOffset;
+    private readonly Queue<double> _calibrationSamples = new();
+    private double _secondsPerVocalUnit = 0.28;
+    private int _lastRenderedIndex = -1;
     private CancellationTokenSource _lyricsCts = new();
     private bool _usingAppleLyrics;
     private bool _applePolling;
@@ -35,6 +43,15 @@ internal sealed class MediaLyricsController : IDisposable
     private string _appleNext = "";
     private bool _appleInstrumental;
     private TimeSpan _appleLineStartedAt;
+    private string _calibrationAppleCurrent = "";
+    private bool _hasAutoCalibration;
+    private string _pendingCalibrationCurrent = "";
+    private string _pendingCalibrationNext = "";
+    private int _pendingCalibrationCount;
+    private int _lastCalibrationLineIndex = -1;
+    private int _lastProgressIndex = -1;
+    private double _lastProgress;
+    private bool _automaticCalibrationEnabled;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
@@ -42,16 +59,24 @@ internal sealed class MediaLyricsController : IDisposable
         _notify = notify;
         _renderTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Render,
             (_, _) => Render(), Dispatcher.CurrentDispatcher);
-        _pollTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+        _pollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
             async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
         _applePollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background,
             async (_, _) => await PollAppleLyricsAsync(), Dispatcher.CurrentDispatcher);
     }
 
     public double OffsetSeconds => _lyricsOffset.TotalSeconds;
+    public bool AutomaticCalibrationEnabled => _automaticCalibrationEnabled;
+    public int LyricsCandidateCount => _candidates.Count;
+    public int LyricsCandidateIndex => _candidateIndex;
+    public string LyricsCandidateLabel => _candidateIndex >= 0 && _candidateIndex < _candidates.Count
+        ? _candidates[_candidateIndex].Label
+        : "自动匹配";
     public string LyricsSource => _usingAppleLyrics
         ? "Apple Music 官方歌词（后备）"
-        : _lines.Count > 0 ? "LRCLIB 同步歌词（优先）" : "正在获取歌词";
+        : _lines.Count > 0
+            ? _hasAutoCalibration ? "LRCLIB 同步歌词（Apple 自动对时）" : "LRCLIB 同步歌词（优先）"
+            : "正在获取歌词";
 
     public async void Start()
     {
@@ -92,8 +117,17 @@ internal sealed class MediaLyricsController : IDisposable
             if (playing)
             {
                 var sampleAge = now - timeline.LastUpdatedTime;
-                if (sampleAge > TimeSpan.Zero && sampleAge < TimeSpan.FromSeconds(5))
+                // GSMTC's Position is the value at LastUpdatedTime. Apple Music can
+                // leave that timestamp untouched for an entire track, so limiting
+                // extrapolation to five seconds repeatedly snapped our clock back
+                // to a stale position. Keep extrapolating until the track ends;
+                // a seek updates the sample and is still detected below.
+                if (sampleAge > TimeSpan.Zero && sampleAge < TimeSpan.FromHours(12))
+                {
                     sampledPosition += sampleAge;
+                    if (timeline.EndTime > TimeSpan.Zero && sampledPosition > timeline.EndTime)
+                        sampledPosition = timeline.EndTime;
+                }
             }
 
             var key = $"{media.Title}\n{media.Artist}\n{timeline.EndTime.TotalSeconds:0}";
@@ -106,11 +140,14 @@ internal sealed class MediaLyricsController : IDisposable
             _title = media.Title;
             _artist = media.Artist;
             _lines = [];
+            _candidates = [];
+            _candidateIndex = -1;
             _usingAppleLyrics = false;
             _appleCurrent = "";
             _appleNext = "";
             _appleInstrumental = false;
             _appleReadFailures = 0;
+            ResetTimingState();
             _render(media.Title, $"{media.Artist} · 正在读取 Apple Music 歌词…", 0, _artist);
             await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
         }
@@ -148,23 +185,41 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts = new CancellationTokenSource();
         try
         {
-            _lines = await _lyricsClient.GetAsync(title, artist, album, duration, _lyricsCts.Token);
-            if (_lines.Count > 0) return;
-
-            var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
-            if (appleSnapshot is not null)
+            var search = await _lyricsClient.SearchAsync(title, artist, album, duration, _lyricsCts.Token);
+            _candidates = search.Candidates;
+            if (_candidates.Count > 0)
             {
-                _usingAppleLyrics = true;
-                ApplyAppleSnapshot(appleSnapshot);
+                var remembered = _choiceStore.Get(_mediaKey);
+                _candidateIndex = remembered is null
+                    ? 0
+                    : Math.Max(0, _candidates.ToList().FindIndex(item => item.Key == remembered));
+                ApplyCandidate(_candidateIndex, remember: false);
                 return;
             }
+
+            if (await TryAppleLyricsFallbackAsync(title)) return;
             _render(title, "未找到同步歌词", 0, _artist);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            try
+            {
+                if (await TryAppleLyricsFallbackAsync(title)) return;
+            }
+            catch (OperationCanceledException) { return; }
+            catch { /* Preserve the original LRCLIB error below. */ }
             _render(title, $"歌词获取失败：{ex.Message}", 0, _artist);
         }
+    }
+
+    private async Task<bool> TryAppleLyricsFallbackAsync(string title)
+    {
+        var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
+        if (appleSnapshot is null) return false;
+        _usingAppleLyrics = true;
+        ApplyAppleSnapshot(appleSnapshot);
+        return true;
     }
 
     private void Render()
@@ -175,7 +230,7 @@ internal sealed class MediaLyricsController : IDisposable
             return;
         }
         if (_lines.Count == 0 || _session is null) return;
-        var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
+        var position = EffectivePosition();
         var index = -1;
         for (var i = 0; i < _lines.Count; i++)
         {
@@ -183,32 +238,30 @@ internal sealed class MediaLyricsController : IDisposable
             index = i;
         }
 
-        var current = index >= 0 ? _lines[index].Text : _title;
-        var next = index + 1 < _lines.Count ? _lines[index + 1].Text : "";
-        var progress = 0d;
-        if (index >= 0 && index + 1 < _lines.Count)
+        // Clock corrections and Apple calibration are deliberately gradual. Never
+        // let those tiny corrections move the displayed row backwards; a real seek
+        // resets this guard in UpdatePlaybackClock.
+        if (_lastRenderedIndex >= 0 && index < _lastRenderedIndex)
+            index = _lastRenderedIndex;
+        _lastRenderedIndex = index;
+        var current = index >= 0 ? LyricTiming.DisplayText(_lines[index].Text) : _title;
+        var next = index + 1 < _lines.Count ? LyricTiming.DisplayText(_lines[index + 1].Text) : "";
+        var progress = LyricTiming.Progress(_lines, index, position, _secondsPerVocalUnit);
+        if (index == _lastProgressIndex)
+            progress = Math.Max(progress, _lastProgress);
+        else
         {
-            var naturalDuration = _lines[index + 1].Time - _lines[index].Time;
-            // Line-synced LRC only tells us when each line starts. Estimating its
-            // duration from character count makes fast or unusually phrased songs
-            // finish early. Sweep across the real interval so it always reaches the
-            // end exactly when the next timestamp begins.
-            var lineDuration = naturalDuration.TotalMilliseconds;
-            if (lineDuration > 0)
-                progress = (position - _lines[index].Time).TotalMilliseconds / lineDuration;
+            _lastProgressIndex = index;
+            _lastProgress = 0;
         }
-        else if (index == _lines.Count - 1)
-        {
-            progress = 1;
-        }
-        if (string.Equals(current, "♪", StringComparison.Ordinal))
-            current = "•••";
+        _lastProgress = progress;
         _render(current, next, Math.Clamp(progress, 0, 1), _artist);
     }
 
     private async Task PollAppleLyricsAsync()
     {
-        if (!_usingAppleLyrics || _applePolling || string.IsNullOrWhiteSpace(_title)) return;
+        if ((!_usingAppleLyrics && (_lines.Count == 0 || !_automaticCalibrationEnabled)) ||
+            _applePolling || string.IsNullOrWhiteSpace(_title)) return;
         _applePolling = true;
         try
         {
@@ -216,12 +269,13 @@ internal sealed class MediaLyricsController : IDisposable
             if (snapshot is not null)
             {
                 _appleReadFailures = 0;
-                ApplyAppleSnapshot(snapshot);
+                if (_usingAppleLyrics) ApplyAppleSnapshot(snapshot);
+                else ApplyCalibrationSnapshot(snapshot);
                 return;
             }
 
             _appleReadFailures++;
-            if (_appleReadFailures == 4)
+            if (_usingAppleLyrics && _appleReadFailures == 4)
                 _ = Task.Run(_appleLyrics.OpenLyricsPanelIfNeeded);
         }
         finally
@@ -235,7 +289,7 @@ internal sealed class MediaLyricsController : IDisposable
         if (!string.Equals(_appleCurrent, snapshot.Current, StringComparison.Ordinal))
         {
             _appleCurrent = snapshot.Current;
-            _appleLineStartedAt = AdvancePlaybackClock(DateTimeOffset.UtcNow);
+            _appleLineStartedAt = AdvancePlaybackClock(Stopwatch.GetTimestamp());
         }
         _appleNext = snapshot.Next;
         _appleInstrumental = snapshot.IsInstrumental;
@@ -250,33 +304,112 @@ internal sealed class MediaLyricsController : IDisposable
             return;
         }
 
-        var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
+        var position = AdvancePlaybackClock(Stopwatch.GetTimestamp()) + _lyricsOffset;
         var elapsed = Math.Max(0, (position - _appleLineStartedAt).TotalSeconds);
         var estimatedSeconds = Math.Clamp(_appleCurrent.Length * 0.28, 1.4, 6.0);
         var progress = Math.Clamp(elapsed / estimatedSeconds, 0, 1);
         _render(_appleCurrent, _appleNext, progress, _artist);
     }
 
+    private void ApplyCalibrationSnapshot(AppleLyricsSnapshot snapshot)
+    {
+        if (!_automaticCalibrationEnabled || snapshot.IsInstrumental ||
+            string.IsNullOrWhiteSpace(snapshot.Current)) return;
+        if (!string.Equals(_pendingCalibrationCurrent, snapshot.Current, StringComparison.Ordinal))
+        {
+            _pendingCalibrationCurrent = snapshot.Current;
+            _pendingCalibrationNext = snapshot.Next;
+            _pendingCalibrationCount = 1;
+            return;
+        }
+        _pendingCalibrationNext = snapshot.Next;
+        _pendingCalibrationCount++;
+        if (_pendingCalibrationCount < 2 ||
+            string.Equals(_calibrationAppleCurrent, snapshot.Current, StringComparison.Ordinal)) return;
+
+        var rawPosition = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        var expected = rawPosition + _lyricsOffset + _automaticOffset;
+        var lineIndex = LyricTiming.FindCalibrationLine(
+            _lines, snapshot.Current, _pendingCalibrationNext, expected);
+        if (lineIndex < 0 || lineIndex <= _lastCalibrationLineIndex) return;
+        // Automatic calibration corrects the source timeline only. The user's
+        // remembered manual offset is intentionally applied afterwards and must
+        // never be cancelled by background calibration.
+        var correction = (_lines[lineIndex].Time - rawPosition).TotalSeconds;
+        if (Math.Abs(correction) > 8) return;
+        var current = _automaticOffset.TotalSeconds;
+        if (_hasAutoCalibration && Math.Abs(correction - current) > 1.25) return;
+        _calibrationSamples.Enqueue(correction);
+        while (_calibrationSamples.Count > 5) _calibrationSamples.Dequeue();
+        var ordered = _calibrationSamples.Order().ToArray();
+        var median = ordered[ordered.Length / 2];
+        var calibrated = _calibrationSamples.Count == 1
+            ? median
+            : current + Math.Clamp(median - current, -0.2, 0.2);
+        _automaticOffset = TimeSpan.FromSeconds(Math.Clamp(calibrated, -6, 6));
+        _hasAutoCalibration = true;
+        _calibrationAppleCurrent = snapshot.Current;
+        _lastCalibrationLineIndex = lineIndex;
+    }
+
+    private TimeSpan EffectivePosition() =>
+        AdvancePlaybackClock(Stopwatch.GetTimestamp()) + _lyricsOffset + _automaticOffset;
+
+    private void ApplyCandidate(int index, bool remember)
+    {
+        if (index < 0 || index >= _candidates.Count) return;
+        _candidateIndex = index;
+        _lines = _candidates[index].Lines;
+        if (remember) _choiceStore.Set(_mediaKey, _candidates[index].Key);
+        ResetTimingState();
+        _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
+    }
+
+    private void ResetTimingState()
+    {
+        _automaticOffset = TimeSpan.Zero;
+        _calibrationSamples.Clear();
+        _calibrationAppleCurrent = "";
+        _hasAutoCalibration = false;
+        _pendingCalibrationCurrent = "";
+        _pendingCalibrationNext = "";
+        _pendingCalibrationCount = 0;
+        _lastCalibrationLineIndex = -1;
+        _lastRenderedIndex = -1;
+        _lastProgressIndex = -1;
+        _lastProgress = 0;
+        _secondsPerVocalUnit = 0.28;
+    }
+
     private void UpdatePlaybackClock(TimeSpan sample, bool playing, DateTimeOffset now, bool forceReset)
     {
+        var monotonicNow = Stopwatch.GetTimestamp();
         if (!_clockInitialized || forceReset || playing != _clockPlaying)
         {
             _clockPosition = sample;
-            _clockUpdatedAt = now;
+            _clockUpdatedTicks = monotonicNow;
             _clockCorrection = TimeSpan.Zero;
             _clockPlaying = playing;
             _clockInitialized = true;
+            _lastRenderedIndex = -1;
+            _lastProgressIndex = -1;
+            _lastProgress = 0;
             return;
         }
 
-        var predicted = AdvancePlaybackClock(now);
+        var predicted = AdvancePlaybackClock(monotonicNow);
         var error = sample - predicted;
         if (Math.Abs(error.TotalSeconds) >= 1.75)
         {
             // A large discontinuity is a real seek or track restart.
             _clockPosition = sample;
-            _clockUpdatedAt = now;
+            _clockUpdatedTicks = monotonicNow;
             _clockCorrection = TimeSpan.Zero;
+            _automaticOffset = TimeSpan.Zero;
+            _calibrationSamples.Clear();
+            _lastRenderedIndex = -1;
+            _lastProgressIndex = -1;
+            _lastProgress = 0;
             return;
         }
 
@@ -287,11 +420,11 @@ internal sealed class MediaLyricsController : IDisposable
         _clockCorrection = TimeSpan.FromSeconds(mergedSeconds);
     }
 
-    private TimeSpan AdvancePlaybackClock(DateTimeOffset now)
+    private TimeSpan AdvancePlaybackClock(long nowTicks)
     {
         if (!_clockInitialized) return TimeSpan.Zero;
-        var elapsed = now - _clockUpdatedAt;
-        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        var elapsedSeconds = (nowTicks - _clockUpdatedTicks) / (double)Stopwatch.Frequency;
+        var elapsed = TimeSpan.FromSeconds(Math.Max(0, elapsedSeconds));
         if (elapsed > TimeSpan.FromSeconds(2)) elapsed = TimeSpan.FromSeconds(2);
 
         var advance = _clockPlaying ? elapsed : TimeSpan.Zero;
@@ -307,8 +440,29 @@ internal sealed class MediaLyricsController : IDisposable
         }
 
         _clockPosition += advance;
-        _clockUpdatedAt = now;
+        _clockUpdatedTicks = nowTicks;
         return _clockPosition;
+    }
+
+    public void ChangeLyricsCandidate(int delta)
+    {
+        if (_candidates.Count <= 1)
+        {
+            ShowTransient("当前只有一个匹配版本");
+            return;
+        }
+        var next = (_candidateIndex + delta) % _candidates.Count;
+        if (next < 0) next += _candidates.Count;
+        ApplyCandidate(next, remember: true);
+        ShowTransient($"已切换歌词版本 {_candidateIndex + 1}/{_candidates.Count}");
+    }
+
+    public void SetAutomaticCalibration(bool enabled, bool notify = true)
+    {
+        _automaticCalibrationEnabled = enabled;
+        ResetTimingState();
+        if (notify)
+            ShowTransient(enabled ? "已开启 Apple 实验自动对时" : "已关闭 Apple 自动对时");
     }
 
     public void RefreshLyrics()
@@ -325,6 +479,9 @@ internal sealed class MediaLyricsController : IDisposable
     public void AdjustOffset(double seconds)
     {
         _lyricsOffset += TimeSpan.FromSeconds(seconds);
+        _lastRenderedIndex = -1;
+        _lastProgressIndex = -1;
+        _lastProgress = 0;
         if (!string.IsNullOrWhiteSpace(_mediaKey))
             _offsetStore.Set(_mediaKey, _lyricsOffset);
         var total = _lyricsOffset.TotalSeconds;
@@ -339,6 +496,9 @@ internal sealed class MediaLyricsController : IDisposable
     public void ResetOffset()
     {
         _lyricsOffset = TimeSpan.Zero;
+        _lastRenderedIndex = -1;
+        _lastProgressIndex = -1;
+        _lastProgress = 0;
         if (!string.IsNullOrWhiteSpace(_mediaKey))
             _offsetStore.Set(_mediaKey, TimeSpan.Zero);
         ShowTransient("歌词偏移已归零");

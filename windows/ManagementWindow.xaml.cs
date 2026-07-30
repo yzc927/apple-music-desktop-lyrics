@@ -7,6 +7,7 @@ namespace AppleMusicDesktopLyrics;
 public partial class ManagementWindow : Window
 {
     private readonly OverlayWindow _overlay;
+    private readonly System.Windows.Threading.DispatcherTimer _refreshTimer;
     private bool _selectingFont;
 
     public ManagementWindow(OverlayWindow overlay)
@@ -19,6 +20,11 @@ public partial class ManagementWindow : Window
         _selectingFont = true;
         FontComboBox.SelectedValue = _overlay.CurrentFontFamily;
         _selectingFont = false;
+        _refreshTimer = new System.Windows.Threading.DispatcherTimer(
+            TimeSpan.FromMilliseconds(500), System.Windows.Threading.DispatcherPriority.Background,
+            (_, _) => RefreshState(), Dispatcher);
+        Loaded += (_, _) => _refreshTimer.Start();
+        Closed += (_, _) => _refreshTimer.Stop();
         Activated += (_, _) => RefreshState();
         BuildArtistList();
         RefreshState();
@@ -28,11 +34,21 @@ public partial class ManagementWindow : Window
     {
         var artist = string.IsNullOrWhiteSpace(_overlay.CurrentArtist) ? "尚未读取到歌手" : _overlay.CurrentArtist;
         CurrentArtistText.Text = artist;
-        CurrentModeText.Text = _overlay.IsAutoColor ? "自动配色已开启" : "当前使用手动颜色";
+        CurrentModeText.Text = _overlay.IsAutoColor ? "自动配色已开启；未收录歌手使用所选后备色" : "当前使用手动颜色";
         LyricsSourceText.Text = $"歌词来源：{_overlay.CurrentLyricsSource}";
+        LyricsVersionText.Text = _overlay.LyricsCandidateCount > 0
+            ? $"{_overlay.LyricsCandidateIndex + 1}/{_overlay.LyricsCandidateCount} · {_overlay.LyricsCandidateLabel}"
+            : "当前没有可切换的 LRCLIB 版本";
         AutoModeButton.Content = _overlay.IsAutoColor ? "关闭自动配色" : "开启自动配色";
+        AutoTimingButton.Content = _overlay.IsAutomaticLyricsCalibration
+            ? "关闭 Apple 自动对时" : "开启 Apple 自动对时";
+        KaraokeModeButton.Content = _overlay.IsKaraokeMode ? "普通模式" : "卡拉 OK 模式";
+        KaraokeModeDescription.Text = _overlay.IsKaraokeMode
+            ? "当前按播放进度从左向右扫色。"
+            : "当前整句从一开始就完整显示颜色。";
         OffsetText.Text = FormatOffset(_overlay.CurrentOffsetSeconds);
-        CurrentPalettePreview.Background = CreateBrush(ArtistColorEngine.Resolve(artist).Colors);
+        CurrentPalettePreview.Background = CreateBrush(
+            ArtistColorEngine.Resolve(artist, _overlay.FallbackHighlightColor).Colors);
     }
 
     private void BuildArtistList()
@@ -78,6 +94,10 @@ public partial class ManagementWindow : Window
     private void Slow_Click(object sender, RoutedEventArgs e) { _overlay.AdjustLyrics(-0.5); RefreshState(); }
     private void Fast_Click(object sender, RoutedEventArgs e) { _overlay.AdjustLyrics(0.5); RefreshState(); }
     private void Reset_Click(object sender, RoutedEventArgs e) { _overlay.ResetLyricsOffset(); RefreshState(); }
+    private void PreviousLyrics_Click(object sender, RoutedEventArgs e) { _overlay.ChangeLyricsCandidate(-1); RefreshState(); }
+    private void NextLyrics_Click(object sender, RoutedEventArgs e) { _overlay.ChangeLyricsCandidate(1); RefreshState(); }
+    private void AutoTimingButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleAutomaticLyricsCalibration(); RefreshState(); }
+    private void KaraokeModeButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleKaraokeMode(); RefreshState(); }
     private void FontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_selectingFont || FontComboBox.SelectedItem is not FontChoice choice) return;

@@ -2,7 +2,7 @@ import Foundation
 
 enum ArtistColorEngine {
     static let curated: [String: [String]] = [
-        "さくらみこ": ["#FFFF7EB6"], "miComet": ["#FFFF7EB6", "#FF55B8FF"],
+        "さくらみこ": ["#FFF25F7C"], "miComet": ["#FFF25F7C", "#FF55B8FF"],
         "星街すいせい": ["#FF55B8FF"], "YOASOBI": ["#FF4D79FF", "#FFFF5B9D"],
         "Ado": ["#FF5965FF", "#FF9A5CFF"], "EGOIST": ["#FF57C7FF", "#FFA56CFF"],
         "Eve": ["#FF4062BB", "#FF4CC9F0"], "HoneyWorks": ["#FFFFB52E", "#FFFF6FAE"],
@@ -52,32 +52,48 @@ enum ArtistColorEngine {
     private static let curatedByNormalizedName: [String: [String]] = curated.reduce(into: [:]) { result, item in
         let key = normalizedKey(for: item.key)
         if result[key] == nil { result[key] = item.value }
-    }
+    }.merging(additionalCurated.reduce(into: [:]) { result, item in
+        let key = normalizedKey(for: item.key)
+        if result[key] == nil { result[key] = item.value }
+    }) { existing, _ in existing }
 
     static var curatedPalettes: [(identity: String, colors: [String])] {
         var seen = Set<String>()
-        return curated
+        return (Array(curated) + Array(additionalCurated))
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
             .compactMap { item in
                 seen.insert(normalizedKey(for: item.key)).inserted ? (item.key, item.value) : nil
             }
     }
 
-    static func colors(for rawArtist: String) -> [String] {
-        let identity = rawArtist.components(separatedBy: " — ").first?.trimmingCharacters(in: .whitespaces) ?? rawArtist
+    static func colors(for rawArtist: String, unknownArtistColor: String? = nil) -> [String] {
+        var identity = rawArtist.components(separatedBy: " — ").first?.trimmingCharacters(in: .whitespaces) ?? rawArtist
+        if let expression = try? NSRegularExpression(
+            pattern: #"[\(（]\s*CV\s*[\.:：．]?\s*(?<actors>[^\)）]+)[\)）]"#,
+            options: .caseInsensitive
+        ) {
+            let range = NSRange(identity.startIndex..., in: identity)
+            if let match = expression.firstMatch(in: identity, range: range),
+               let actorsRange = Range(match.range(withName: "actors"), in: identity) {
+                identity = String(identity[actorsRange]).trimmingCharacters(in: .whitespaces)
+            }
+        }
         if let exact = curatedByNormalizedName[normalizedKey(for: identity)] { return exact }
-        let separators = try? NSRegularExpression(pattern: #"\s+(?:&|＆|×|feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*"#, options: .caseInsensitive)
+        let separators = try? NSRegularExpression(pattern: #"\s*(?:&|＆|×)\s*|\s+(?:feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*"#, options: .caseInsensitive)
         let range = NSRange(identity.startIndex..., in: identity)
         let artists = separators?.stringByReplacingMatches(in: identity, range: range, withTemplate: "\u{1F}")
             .split(separator: "\u{1F}").map { String($0).trimmingCharacters(in: .whitespaces) } ?? [identity]
         var seen = Set<String>()
         let uniqueArtists = artists.filter { seen.insert(normalizedKey(for: $0)).inserted }
-        if uniqueArtists.count > 1 { return uniqueArtists.prefix(3).map(singleColor) }
-        return [singleColor(identity)]
+        if uniqueArtists.count > 1 {
+            return uniqueArtists.prefix(3).map { singleColor($0, unknownArtistColor: unknownArtistColor) }
+        }
+        return [singleColor(identity, unknownArtistColor: unknownArtistColor)]
     }
 
-    private static func singleColor(_ artist: String) -> String {
+    private static func singleColor(_ artist: String, unknownArtistColor: String?) -> String {
         if let color = curatedByNormalizedName[normalizedKey(for: artist)]?.first { return color }
+        if let unknownArtistColor, !unknownArtistColor.isEmpty { return unknownArtistColor }
         var hash: UInt32 = 2_166_136_261
         for scalar in normalizedKey(for: artist).unicodeScalars { hash = (hash ^ scalar.value) &* 16_777_619 }
         return fallback[Int(hash % UInt32(fallback.count))]

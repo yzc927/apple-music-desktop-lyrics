@@ -10,7 +10,9 @@ struct OverlayView: View {
     @State private var toolbarVisible = false
 
     private var colors: [Color] {
-        let values = settings.autoColor ? ArtistColorEngine.colors(for: display.artist) : [settings.manualColor]
+        let values = settings.autoColor
+            ? ArtistColorEngine.colors(for: display.artist, unknownArtistColor: settings.manualColor)
+            : [settings.manualColor]
         return values.compactMap { value in NSColor(argbHex: value).map { Color(nsColor: $0) } }
     }
 
@@ -18,10 +20,20 @@ struct OverlayView: View {
         GeometryReader { geometry in
             let scale = min(2.2, max(0.65, min(geometry.size.width / 760, geometry.size.height / 170)))
             ZStack(alignment: .top) {
+                if !settings.locked && toolbarVisible {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.black.opacity(0.25))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: max(54, geometry.size.height * 0.46))
+                        .frame(maxHeight: .infinity, alignment: .center)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
                 VStack(spacing: 7 * scale) {
                     ProgressLyricText(
                         text: display.current,
-                        progress: display.progress,
+                        progress: settings.karaokeMode ? display.progress : 1,
                         colors: colors.isEmpty ? [.cyan] : colors,
                         font: lyricFont(size: 38 * scale)
                     )
@@ -39,6 +51,8 @@ struct OverlayView: View {
 
                 if !settings.locked && toolbarVisible {
                     toolbar(scale: scale)
+                        .position(x: geometry.size.width / 2,
+                                  y: geometry.size.height / 2 - 58 * scale)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
@@ -68,7 +82,7 @@ struct OverlayView: View {
 
     @ViewBuilder
     private func toolbar(scale: CGFloat) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 0) {
             toolButton("backward.end.alt", help: "歌词慢 0.5 秒") { coordinator.adjustOffset(-0.5) }
                 .overlay(alignment: .bottomTrailing) { badge("0.5") }
             toolButton("forward.end.alt", help: "歌词快 0.5 秒") { coordinator.adjustOffset(0.5) }
@@ -77,16 +91,20 @@ struct OverlayView: View {
             toolButton(settings.alwaysOnTop ? "pin.fill" : "pin", help: "切换置顶") {
                 settings.alwaysOnTop.toggle()
             }
-            toolButton("paintpalette.fill", help: "切换手动颜色") {
-                settings.autoColor = false
+            toolButton("paintpalette.fill", help: "切换手动／后备颜色") {
                 let choices = ["#FFFF6FAE", "#FF55B8FF", "#FF46C8C8", "#FF9B72F2", "#FFFF9F43"]
                 let index = (choices.firstIndex(of: settings.manualColor) ?? -1) + 1
                 settings.manualColor = choices[index % choices.count]
-                coordinator.showToast("手动配色")
+                coordinator.showToast(settings.autoColor ? "已更改未收录歌手的后备颜色" : "手动配色")
             }
             toolButton("sparkles", help: "按歌手自动配色") {
                 settings.autoColor = true
                 coordinator.showToast("歌手自动配色")
+            }
+            toolButton(settings.karaokeMode ? "mic.fill" : "text.alignleft",
+                       help: settings.karaokeMode ? "切换为普通模式" : "切换为卡拉 OK 模式") {
+                settings.karaokeMode.toggle()
+                coordinator.showToast(settings.karaokeMode ? "卡拉 OK 扫色模式" : "普通整句模式")
             }
             toolButton("xmark", help: "隐藏到菜单栏") { close() }
         }

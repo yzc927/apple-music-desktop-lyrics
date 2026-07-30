@@ -17,6 +17,8 @@ struct ManagementView: View {
                 LabeledContent("歌曲", value: display.title)
                 LabeledContent("歌手", value: display.artist.isEmpty ? "—" : display.artist)
                 LabeledContent("歌词来源", value: display.source.rawValue)
+                LabeledContent("歌词版本", value: display.lyricVersionPosition.isEmpty
+                    ? display.lyricVersion : "\(display.lyricVersionPosition) · \(display.lyricVersion)")
                 LabeledContent("当前偏移", value: String(format: "%+.1f 秒", coordinator.offset))
                 HStack {
                     Button("歌词慢 0.5 秒") { coordinator.adjustOffset(-0.5) }
@@ -24,6 +26,13 @@ struct ManagementView: View {
                     Button("归零") { coordinator.resetOffset() }
                     Button("重新读取") { coordinator.refresh() }
                 }
+                HStack {
+                    Button("上一个歌词版本") { coordinator.changeLyricsCandidate(-1) }
+                    Button("下一个歌词版本") { coordinator.changeLyricsCandidate(1) }
+                }
+                Toggle("Apple 实验自动对时", isOn: $settings.automaticLyricsCalibration)
+                Text("默认关闭；LRCLIB 时间明显不准时再尝试开启。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("窗口") {
@@ -38,12 +47,26 @@ struct ManagementView: View {
                 }
             }
 
+            Section("歌词显示") {
+                Picker("显示模式", selection: $settings.karaokeMode) {
+                    Text("普通").tag(false)
+                    Text("卡拉 OK").tag(true)
+                }
+                .pickerStyle(.segmented)
+                Text(settings.karaokeMode
+                    ? "按播放进度从左向右扫色。"
+                    : "当前句从一开始就完整显示歌手颜色。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("颜色") {
                 Toggle("按歌手自动配色", isOn: $settings.autoColor)
                 HStack {
                     Text("当前歌手配色")
                     Spacer()
-                    ForEach(Array(ArtistColorEngine.colors(for: display.artist).enumerated()), id: \.offset) { item in
+                    ForEach(Array(ArtistColorEngine.colors(
+                        for: display.artist, unknownArtistColor: settings.manualColor
+                    ).enumerated()), id: \.offset) { item in
                         Circle().fill(Color(nsColor: NSColor(argbHex: item.element) ?? .cyan)).frame(width: 22, height: 22)
                     }
                 }
@@ -51,11 +74,10 @@ struct ManagementView: View {
                     ForEach(manualColors, id: \.self) { value in
                         Button {
                             settings.manualColor = value
-                            settings.autoColor = false
                         } label: {
                             Circle().fill(Color(nsColor: NSColor(argbHex: value) ?? .cyan))
                                 .frame(width: 26, height: 26)
-                                .overlay(Circle().stroke(settings.manualColor == value && !settings.autoColor ? Color.primary : Color.clear, lineWidth: 2))
+                                .overlay(Circle().stroke(settings.manualColor == value ? Color.primary : Color.clear, lineWidth: 2))
                         }.buttonStyle(.plain)
                     }
                 }
