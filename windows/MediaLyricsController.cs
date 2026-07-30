@@ -1,0 +1,205 @@
+using System.Windows.Threading;
+using Windows.Media.Control;
+
+namespace AppleMusicDesktopLyrics;
+
+internal sealed class MediaLyricsController : IDisposable
+{
+    private readonly Action<string, string, double, string> _render;
+    private readonly Action<string> _notify;
+    private readonly LyricsClient _lyricsClient = new();
+    private readonly SongOffsetStore _offsetStore = new();
+    private readonly DispatcherTimer _renderTimer;
+    private readonly DispatcherTimer _pollTimer;
+    private GlobalSystemMediaTransportControlsSessionManager? _manager;
+    private GlobalSystemMediaTransportControlsSession? _session;
+    private IReadOnlyList<LyricLine> _lines = [];
+    private string _mediaKey = "";
+    private string _title = "";
+    private TimeSpan _position;
+    private DateTimeOffset _positionUpdatedAt;
+    private bool _playing;
+    private bool _polling;
+    private string _artist = "";
+    private TimeSpan _lyricsOffset;
+    private TimeSpan? _lastRenderedPosition;
+    private CancellationTokenSource _lyricsCts = new();
+
+    public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
+    {
+        _render = render;
+        _notify = notify;
+        _renderTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Render,
+            (_, _) => Render(), Dispatcher.CurrentDispatcher);
+        _pollTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+            async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
+    }
+
+    public double OffsetSeconds => _lyricsOffset.TotalSeconds;
+
+    public async void Start()
+    {
+        try
+        {
+            _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            _pollTimer.Start();
+            _renderTimer.Start();
+            await PollAsync();
+        }
+        catch (Exception ex)
+        {
+            _render("无法读取 Windows 媒体会话", ex.Message, 0, "");
+        }
+    }
+
+    private async Task PollAsync()
+    {
+        if (_polling || _manager is null) return;
+        _polling = true;
+        try
+        {
+            _session = FindAppleMusicSession(_manager);
+            if (_session is null)
+            {
+                _playing = false;
+                _render("正在等待 Apple Music…", "请先在 Apple Music 中播放一首歌曲", 0, "");
+                return;
+            }
+
+            var media = await _session.TryGetMediaPropertiesAsync();
+            var timeline = _session.GetTimelineProperties();
+            var playback = _session.GetPlaybackInfo();
+            _position = timeline.Position;
+            _positionUpdatedAt = timeline.LastUpdatedTime;
+            _playing = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+            var key = $"{media.Title}\n{media.Artist}\n{timeline.EndTime.TotalSeconds:0}";
+            if (key == _mediaKey) return;
+            _mediaKey = key;
+            _lyricsOffset = _offsetStore.Get(_mediaKey);
+            _lastRenderedPosition = null;
+            _title = media.Title;
+            _artist = media.Artist;
+            _lines = [];
+            _render(media.Title, $"{media.Artist} · 正在匹配歌词…", 0, _artist);
+            await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
+        }
+        catch (Exception ex)
+        {
+            _render(string.IsNullOrWhiteSpace(_title) ? "读取播放信息失败" : _title, ex.Message, 0, _artist);
+        }
+        finally
+        {
+            _polling = false;
+        }
+    }
+
+    private static GlobalSystemMediaTransportControlsSession? FindAppleMusicSession(
+        GlobalSystemMediaTransportControlsSessionManager manager)
+    {
+        var sessions = manager.GetSessions();
+        return sessions.FirstOrDefault(session =>
+                   session.SourceAppUserModelId.Contains("AppleMusic", StringComparison.OrdinalIgnoreCase) ||
+                   session.SourceAppUserModelId.Contains("Apple.Music", StringComparison.OrdinalIgnoreCase))
+               ?? manager.GetCurrentSession();
+    }
+
+    private async Task LoadLyricsAsync(string title, string artist, string album, TimeSpan duration)
+    {
+        _lyricsCts.Cancel();
+        _lyricsCts.Dispose();
+        _lyricsCts = new CancellationTokenSource();
+        try
+        {
+            _lines = await _lyricsClient.GetAsync(title, artist, album, duration, _lyricsCts.Token);
+            if (_lines.Count == 0) _render(title, "未找到同步歌词", 0, _artist);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _render(title, $"歌词获取失败：{ex.Message}", 0, _artist);
+        }
+    }
+
+    private void Render()
+    {
+        if (_lines.Count == 0 || _session is null) return;
+        var position = _position;
+        if (_playing) position += DateTimeOffset.UtcNow - _positionUpdatedAt;
+        position += _lyricsOffset;
+        if (_playing && _lastRenderedPosition is { } previous && position < previous &&
+            previous - position < TimeSpan.FromSeconds(1.25))
+            position = previous;
+        _lastRenderedPosition = position;
+        var index = -1;
+        for (var i = 0; i < _lines.Count; i++)
+        {
+            if (_lines[i].Time > position) break;
+            index = i;
+        }
+
+        var current = index >= 0 ? _lines[index].Text : _title;
+        var next = index + 1 < _lines.Count ? _lines[index + 1].Text : "";
+        var progress = 0d;
+        if (index >= 0 && index + 1 < _lines.Count)
+        {
+            var naturalDuration = _lines[index + 1].Time - _lines[index].Time;
+            // Line-synced LRC has no word timestamps. Avoid stretching the sweep
+            // across a long instrumental gap: finish within a reasonable singing
+            // duration, then hold the completed color until the next line.
+            var estimatedSeconds = Math.Clamp(_lines[index].Text.Length * 0.28, 1.4, 6.0);
+            var activeDuration = naturalDuration > TimeSpan.FromSeconds(estimatedSeconds * 1.35)
+                ? TimeSpan.FromSeconds(estimatedSeconds)
+                : naturalDuration;
+            var lineDuration = activeDuration.TotalMilliseconds;
+            if (lineDuration > 0)
+                progress = (position - _lines[index].Time).TotalMilliseconds / lineDuration;
+        }
+        else if (index == _lines.Count - 1)
+        {
+            progress = 1;
+        }
+        _render(current, next, Math.Clamp(progress, 0, 1), _artist);
+    }
+
+    public void RefreshLyrics()
+    {
+        _mediaKey = "";
+        _ = PollAsync();
+    }
+
+    public void ShowTransient(string message)
+    {
+        _notify(message);
+    }
+
+    public void AdjustOffset(double seconds)
+    {
+        _lyricsOffset += TimeSpan.FromSeconds(seconds);
+        if (!string.IsNullOrWhiteSpace(_mediaKey))
+            _offsetStore.Set(_mediaKey, _lyricsOffset);
+        var total = _lyricsOffset.TotalSeconds;
+        var description = Math.Abs(total) < 0.01
+            ? "歌词偏移已归零"
+            : total > 0
+                ? $"歌词已快 {total:0.0} 秒"
+                : $"歌词已慢 {Math.Abs(total):0.0} 秒";
+        ShowTransient(description);
+    }
+
+    public void ResetOffset()
+    {
+        _lyricsOffset = TimeSpan.Zero;
+        if (!string.IsNullOrWhiteSpace(_mediaKey))
+            _offsetStore.Set(_mediaKey, TimeSpan.Zero);
+        ShowTransient("歌词偏移已归零");
+    }
+
+    public void Dispose()
+    {
+        _pollTimer.Stop();
+        _renderTimer.Stop();
+        _lyricsCts.Cancel();
+        _lyricsCts.Dispose();
+    }
+}
