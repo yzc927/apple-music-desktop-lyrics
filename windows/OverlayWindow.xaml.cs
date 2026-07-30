@@ -19,6 +19,7 @@ public partial class OverlayWindow : Window, IDisposable
     private const int WsExToolWindow = 0x80;
     private readonly MediaLyricsController _controller;
     private readonly DispatcherTimer _lockedHoverTimer;
+    private readonly DispatcherTimer _placementSaveTimer;
     private UnlockWindow? _unlockWindow;
     private DateTimeOffset? _lockedHoverStartedAt;
     private bool _unlockRequestedVisible;
@@ -55,19 +56,34 @@ public partial class OverlayWindow : Window, IDisposable
     public OverlayWindow()
     {
         InitializeComponent();
+        _placementSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        _placementSaveTimer.Tick += (_, _) =>
+        {
+            _placementSaveTimer.Stop();
+            SaveSettings();
+        };
+        _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
+            DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
         Loaded += OnLoaded;
+        LocationChanged += (_, _) => SchedulePlacementSave();
         SizeChanged += (_, _) =>
         {
             UpdateTypography();
             UpdateHighlightMetrics();
             UpdateHighlightClip();
+            SchedulePlacementSave();
         };
         LoadSettings();
-        _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
-            DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
         _controller = new MediaLyricsController(SetLines, ShowToast);
         _controller.Start();
+    }
+
+    private void SchedulePlacementSave()
+    {
+        if (!IsLoaded) return;
+        _placementSaveTimer.Stop();
+        _placementSaveTimer.Start();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -477,6 +493,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void Dispose()
     {
+        _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
         _unlockWindow?.Close();
         _controller.Dispose();
