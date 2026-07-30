@@ -4,7 +4,7 @@ using System.Windows.Automation;
 
 namespace AppleMusicDesktopLyrics;
 
-internal sealed record AppleLyricsSnapshot(string Current, string Next);
+internal sealed record AppleLyricsSnapshot(string Current, string Next, bool IsInstrumental = false);
 
 /// <summary>
 /// Reads the lyric elements that Apple Music already exposes to Windows UI Automation.
@@ -14,6 +14,7 @@ internal sealed class AppleMusicUiLyricsProvider
 {
     private const string LyricsButtonId = "LyricsToggleButton";
     private const string CurrentLineId = "CurrentLine";
+    private const string CurrentInstrumentalId = "CurrentInstrumental";
     private const string LineId = "Line";
     private const string TimeBasedLyricsId = "TimeBasedLyrics";
     private const string TrackTitleId = "ScrollingText";
@@ -39,6 +40,11 @@ internal sealed class AppleMusicUiLyricsProvider
             if (root is null || (!string.IsNullOrWhiteSpace(title) && !MatchesCurrentTrack(root, title)))
                 return null;
 
+            var instrumental = root.FindFirst(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, CurrentInstrumentalId));
+            if (instrumental is not null)
+                return ReadInstrumental(instrumental);
+
             var currentElement = root.FindFirst(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.AutomationIdProperty, CurrentLineId));
             if (currentElement is null)
@@ -60,6 +66,22 @@ internal sealed class AppleMusicUiLyricsProvider
         catch (InvalidOperationException) { }
         catch (COMException) { }
         return null;
+    }
+
+    private static AppleLyricsSnapshot ReadInstrumental(AutomationElement instrumental)
+    {
+        var walker = TreeWalker.RawViewWalker;
+        var sibling = walker.GetNextSibling(instrumental);
+        while (sibling is not null)
+        {
+            var nextLine = sibling.FindFirst(TreeScope.Element | TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, LineId));
+            var next = nextLine?.Current.Name?.Trim() ?? "";
+            if (!string.IsNullOrWhiteSpace(next))
+                return new AppleLyricsSnapshot("•••", next, true);
+            sibling = walker.GetNextSibling(sibling);
+        }
+        return new AppleLyricsSnapshot("•••", "", true);
     }
 
     private static AppleLyricsSnapshot? TryReadVisibleLines(AutomationElement root)

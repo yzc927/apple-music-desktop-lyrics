@@ -33,6 +33,7 @@ internal sealed class MediaLyricsController : IDisposable
     private int _appleReadFailures;
     private string _appleCurrent = "";
     private string _appleNext = "";
+    private bool _appleInstrumental;
     private TimeSpan _appleLineStartedAt;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
@@ -105,6 +106,7 @@ internal sealed class MediaLyricsController : IDisposable
             _usingAppleLyrics = false;
             _appleCurrent = "";
             _appleNext = "";
+            _appleInstrumental = false;
             _appleReadFailures = 0;
             _render(media.Title, $"{media.Artist} · 正在读取 Apple Music 歌词…", 0, _artist);
             await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
@@ -226,11 +228,18 @@ internal sealed class MediaLyricsController : IDisposable
             _appleLineStartedAt = AdvancePlaybackClock(DateTimeOffset.UtcNow);
         }
         _appleNext = snapshot.Next;
+        _appleInstrumental = snapshot.IsInstrumental;
     }
 
     private void RenderAppleLyrics()
     {
         if (string.IsNullOrWhiteSpace(_appleCurrent)) return;
+        if (_appleInstrumental)
+        {
+            _render(_appleCurrent, _appleNext, 0, _artist);
+            return;
+        }
+
         var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
         var elapsed = Math.Max(0, (position - _appleLineStartedAt).TotalSeconds);
         var estimatedSeconds = Math.Clamp(_appleCurrent.Length * 0.28, 1.4, 6.0);
