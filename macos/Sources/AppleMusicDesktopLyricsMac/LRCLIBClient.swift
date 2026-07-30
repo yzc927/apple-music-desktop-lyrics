@@ -12,13 +12,21 @@ final class LRCLIBClient {
     func lyrics(for track: TrackInfo) async -> [LyricLine] {
         let title = cleanTitle(track.title)
         var results = await search(title: title, artist: cleanArtist(track.artist))
-        if !results.contains(where: { !($0.syncedLyrics ?? "").isEmpty }) {
+        let usedTitleOnlySearch = !results.contains(where: { !($0.syncedLyrics ?? "").isEmpty })
+        if usedTitleOnlySearch {
             results = await search(title: title, artist: nil)
         }
         let best = results.filter { !($0.syncedLyrics ?? "").isEmpty }.min {
             score($0, track: track) < score($1, track: track)
         }
-        return LRCParser.parse(best?.syncedLyrics ?? "")
+        guard let best else { return [] }
+        let durationDifference = abs(best.duration - track.duration)
+        let allowedDurationDifference = max(12, track.duration * 0.06)
+        guard track.duration <= 0 || durationDifference <= allowedDurationDifference else { return [] }
+        if usedTitleOnlySearch && !containsEither(best.artistName, cleanArtist(track.artist)) && durationDifference > 3 {
+            return []
+        }
+        return LRCParser.parse(best.syncedLyrics ?? "")
     }
 
     private func search(title: String, artist: String?) async -> [LRCLIBResponse] {
