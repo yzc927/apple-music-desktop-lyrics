@@ -7,11 +7,18 @@ namespace AppleMusicDesktopLyrics;
 public partial class ManagementWindow : Window
 {
     private readonly OverlayWindow _overlay;
+    private bool _selectingFont;
 
     public ManagementWindow(OverlayWindow overlay)
     {
         InitializeComponent();
         _overlay = overlay;
+        FontComboBox.ItemsSource = _overlay.AvailableFonts;
+        FontComboBox.DisplayMemberPath = nameof(FontChoice.DisplayName);
+        FontComboBox.SelectedValuePath = nameof(FontChoice.FamilyName);
+        _selectingFont = true;
+        FontComboBox.SelectedValue = _overlay.CurrentFontFamily;
+        _selectingFont = false;
         Activated += (_, _) => RefreshState();
         BuildArtistList();
         RefreshState();
@@ -70,4 +77,9 @@ public partial class ManagementWindow : Window
     private void Slow_Click(object sender, RoutedEventArgs e) { _overlay.AdjustLyrics(-0.5); RefreshState(); }
     private void Fast_Click(object sender, RoutedEventArgs e) { _overlay.AdjustLyrics(0.5); RefreshState(); }
     private void Reset_Click(object sender, RoutedEventArgs e) { _overlay.ResetLyricsOffset(); RefreshState(); }
+    private void FontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_selectingFont || FontComboBox.SelectedItem is not FontChoice choice) return;
+        _overlay.SetFontFamily(choice.FamilyName);
+    }
 }

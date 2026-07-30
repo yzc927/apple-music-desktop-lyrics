@@ -3,6 +3,7 @@
 **/obj/
 **/publish/
 **/artifacts/
+.probe/
 
 # IDE and user state
 .vs/

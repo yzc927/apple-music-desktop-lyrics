@@ -1,7 +1,8 @@
 # Apple Music Desktop Lyrics
 
 一个轻量的 Windows 桌面歌词伴侣：从 Windows 媒体会话读取 Apple Music 当前曲目，
-从 LRCLIB 匹配同步歌词，并通过透明置顶窗口显示。
+优先跟随 Apple Music 自带歌词的当前行，读取不到时从 LRCLIB 匹配同步歌词，并通过
+透明置顶窗口显示。
 
 应用图标源文件位于 `assets/app-icon.png`，Windows 多尺寸图标位于 `assets/app.ico`。
 
@@ -20,8 +21,8 @@ dotnet run --project .\AppleMusicDesktopLyrics.csproj
 图标自身拦截点击，歌词覆盖区域后面的其他应用控件仍可正常操作。解锁图标默认隐藏；
 鼠标在歌词区域停留 1 秒后淡入，移出区域后淡出。
 “色”按钮或托盘菜单中的“自定义歌词颜色”可以设置已唱部分的填充颜色，选择结果会
-保存到本机。由于 LRCLIB 通常提供逐行而非逐字时间戳，行内填色是按相邻两行的时间
-平滑估算。
+保存到本机。Apple 与 LRCLIB 模式的换行分别以 Apple 的 `CurrentLine` 和 LRC 时间戳
+为准；因为没有可用的逐字时间戳，行内填色仍按文字长度和相邻时间平滑估算。
 
 工具栏的“慢”和“快”每次调整 0.5 秒，托盘菜单还可将偏移归零。“自”按钮开启
 按歌手自动配色：目前会从精选色板中为同一歌手稳定分配相同颜色。
@@ -37,7 +38,13 @@ dotnet run --project .\AppleMusicDesktopLyrics.csproj
 Windows 专用实现，方便后续用 macOS 的媒体适配器和 AppKit/SwiftUI 窗口替换。
 
 系统托盘右键菜单可打开独立管理界面，查看当前歌手配色、切换自动模式、调整当前歌曲
-偏移并浏览已加入的歌手/组合色板。歌词悬浮窗不提供管理入口，以减少误触。
+偏移、选择本机已安装的精选字体，并浏览已加入的歌手/组合色板。默认字体保持
+Microsoft YaHei UI。歌词悬浮窗不提供管理入口，以减少误触。
+
+程序会在需要时通过 Windows UI Automation 自动打开 Apple Music 的歌词面板，读取其中
+AutomationId 为 `Line` 和 `CurrentLine` 的公开文本元素。它不加载 Apple 私有 DLL，也不
+读取或保存 Apple 账户 Cookie/令牌。若当前 Apple Music 版本未暴露这些元素，程序会自动
+回退到 LRCLIB。
 
 歌词窗口隐藏到托盘或退出时会保存当前位置和大小；下次启动自动恢复，并在显示器布局
 变化后将窗口限制在可见屏幕范围内。移动或缩放停止约 450 毫秒后也会自动保存，因此
@@ -57,6 +64,7 @@ dotnet publish -c Release -r win-x64 --self-contained true \
 
 ## 已知限制
 
-- Apple Music 没有公开桌面歌词接口；本程序只读取 Windows 提供的媒体元数据和进度。
-- 同步歌词来自社区维护的 LRCLIB，个别歌曲可能缺失或匹配不准确。
+- Apple Music 没有稳定的公开桌面歌词 API；UI 自动化元素名称若在未来版本改变，会暂时
+  回退到 LRCLIB。
+- 后备同步歌词来自社区维护的 LRCLIB，个别歌曲可能缺失或匹配不准确。
 - Windows 媒体会话有时会延迟更新约一秒，歌词进度也会相应有少量偏差。

@@ -11,7 +11,8 @@ Apple Music 桌面歌词伴侣。当前提供 Windows 版本，并为后续 macO
 ## Windows 功能
 
 - 透明桌面歌词、置顶、锁定、鼠标穿透、缩放与托盘管理
-- LRCLIB 同步歌词匹配和逐行卡拉 OK 填色
+- 优先跟随 Apple Music 自带歌词当前行，读取不到时回退 LRCLIB
+- 逐行卡拉 OK 填色与精选字体切换
 - 每首歌曲独立保存时间偏移
 - 按歌手、合作歌手或组合应用稳定单色/渐变配色
 - 独立管理界面和本地窗口状态保存
@@ -33,9 +34,10 @@ dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -r win-x64 `
 
 ## 数据与隐私
 
-应用通过系统媒体会话读取当前曲目的歌名、歌手、专辑、时长、播放状态和进度。为匹配
-同步歌词，曲目信息会发送给 LRCLIB。应用不读取 Apple ID、密码、播放列表或完整音乐
-资料库。窗口设置和逐歌曲时间偏移只保存在本机。
+应用通过系统媒体会话读取当前曲目的歌名、歌手、专辑、时长、播放状态和进度，并通过
+Windows UI Automation 读取 Apple Music 已显示的歌词行和 `CurrentLine`。此过程不读取
+Apple ID、密码、Cookie 或令牌。只有 Apple 歌词不可读时，曲目信息才会发送给 LRCLIB
+进行后备匹配。窗口、字体和逐歌曲时间偏移设置只保存在本机。
 
 ## 状态
 

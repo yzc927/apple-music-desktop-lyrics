@@ -8,9 +8,11 @@ internal sealed class MediaLyricsController : IDisposable
     private readonly Action<string, string, double, string> _render;
     private readonly Action<string> _notify;
     private readonly LyricsClient _lyricsClient = new();
+    private readonly AppleMusicUiLyricsProvider _appleLyrics = new();
     private readonly SongOffsetStore _offsetStore = new();
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _pollTimer;
+    private readonly DispatcherTimer _applePollTimer;
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
     private IReadOnlyList<LyricLine> _lines = [];
@@ -26,6 +28,12 @@ internal sealed class MediaLyricsController : IDisposable
     private string _artist = "";
     private TimeSpan _lyricsOffset;
     private CancellationTokenSource _lyricsCts = new();
+    private bool _usingAppleLyrics;
+    private bool _applePolling;
+    private int _appleReadFailures;
+    private string _appleCurrent = "";
+    private string _appleNext = "";
+    private TimeSpan _appleLineStartedAt;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
@@ -35,6 +43,8 @@ internal sealed class MediaLyricsController : IDisposable
             (_, _) => Render(), Dispatcher.CurrentDispatcher);
         _pollTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
             async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
+        _applePollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background,
+            async (_, _) => await PollAppleLyricsAsync(), Dispatcher.CurrentDispatcher);
     }
 
     public double OffsetSeconds => _lyricsOffset.TotalSeconds;
@@ -46,6 +56,7 @@ internal sealed class MediaLyricsController : IDisposable
             _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             _pollTimer.Start();
             _renderTimer.Start();
+            _applePollTimer.Start();
             await PollAsync();
         }
         catch (Exception ex)
@@ -91,7 +102,11 @@ internal sealed class MediaLyricsController : IDisposable
             _title = media.Title;
             _artist = media.Artist;
             _lines = [];
-            _render(media.Title, $"{media.Artist} · 正在匹配歌词…", 0, _artist);
+            _usingAppleLyrics = false;
+            _appleCurrent = "";
+            _appleNext = "";
+            _appleReadFailures = 0;
+            _render(media.Title, $"{media.Artist} · 正在读取 Apple Music 歌词…", 0, _artist);
             await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
         }
         catch (Exception ex)
@@ -121,6 +136,14 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts = new CancellationTokenSource();
         try
         {
+            var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
+            if (appleSnapshot is not null)
+            {
+                _usingAppleLyrics = true;
+                ApplyAppleSnapshot(appleSnapshot);
+                return;
+            }
+
             _lines = await _lyricsClient.GetAsync(title, artist, album, duration, _lyricsCts.Token);
             if (_lines.Count == 0) _render(title, "未找到同步歌词", 0, _artist);
         }
@@ -133,6 +156,11 @@ internal sealed class MediaLyricsController : IDisposable
 
     private void Render()
     {
+        if (_usingAppleLyrics)
+        {
+            RenderAppleLyrics();
+            return;
+        }
         if (_lines.Count == 0 || _session is null) return;
         var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
         var index = -1;
@@ -164,6 +192,50 @@ internal sealed class MediaLyricsController : IDisposable
             progress = 1;
         }
         _render(current, next, Math.Clamp(progress, 0, 1), _artist);
+    }
+
+    private async Task PollAppleLyricsAsync()
+    {
+        if (!_usingAppleLyrics || _applePolling || string.IsNullOrWhiteSpace(_title)) return;
+        _applePolling = true;
+        try
+        {
+            var snapshot = await Task.Run(() => _appleLyrics.TryRead());
+            if (snapshot is not null)
+            {
+                _appleReadFailures = 0;
+                ApplyAppleSnapshot(snapshot);
+                return;
+            }
+
+            _appleReadFailures++;
+            if (_appleReadFailures == 4)
+                _ = Task.Run(_appleLyrics.OpenLyricsPanelIfNeeded);
+        }
+        finally
+        {
+            _applePolling = false;
+        }
+    }
+
+    private void ApplyAppleSnapshot(AppleLyricsSnapshot snapshot)
+    {
+        if (!string.Equals(_appleCurrent, snapshot.Current, StringComparison.Ordinal))
+        {
+            _appleCurrent = snapshot.Current;
+            _appleLineStartedAt = AdvancePlaybackClock(DateTimeOffset.UtcNow);
+        }
+        _appleNext = snapshot.Next;
+    }
+
+    private void RenderAppleLyrics()
+    {
+        if (string.IsNullOrWhiteSpace(_appleCurrent)) return;
+        var position = AdvancePlaybackClock(DateTimeOffset.UtcNow) + _lyricsOffset;
+        var elapsed = Math.Max(0, (position - _appleLineStartedAt).TotalSeconds);
+        var estimatedSeconds = Math.Clamp(_appleCurrent.Length * 0.28, 1.4, 6.0);
+        var progress = Math.Clamp(elapsed / estimatedSeconds, 0, 1);
+        _render(_appleCurrent, _appleNext, progress, _artist);
     }
 
     private void UpdatePlaybackClock(TimeSpan sample, bool playing, DateTimeOffset now, bool forceReset)
@@ -257,6 +329,7 @@ internal sealed class MediaLyricsController : IDisposable
     {
         _pollTimer.Stop();
         _renderTimer.Stop();
+        _applePollTimer.Stop();
         _lyricsCts.Cancel();
         _lyricsCts.Dispose();
     }
