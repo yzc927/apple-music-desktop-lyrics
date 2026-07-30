@@ -4,7 +4,8 @@
 优先从 LRCLIB 匹配同步歌词，找不到时跟随 Apple Music 自带歌词的当前行，并通过
 透明置顶窗口显示。
 
-应用图标源文件位于 `assets/app-icon.png`，Windows 多尺寸图标位于 `assets/app.ico`。
+跨平台透明图标母版位于仓库根目录 `assets/app-icon.png`，Windows 多尺寸图标位于
+`assets/app.ico`。运行 `python tools/generate_icons.py` 可同时更新 Windows 与 macOS 图标资源。
 
 ## 运行
 
