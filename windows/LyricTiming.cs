@@ -34,6 +34,13 @@ internal static class LyricTiming
         var natural = (lines[index + 1].Time - lines[index].Time).TotalSeconds;
         if (natural <= 0) return 0;
         var elapsed = (position - lines[index].Time).TotalSeconds;
+        var units = VocalUnits(lines[index].Text);
+        var density = units / natural;
+        // Above roughly five vocal units per second, line-synchronised LRC often
+        // contains a rapid phrase followed by silence. Sweeping uniformly through
+        // that whole interval visibly trails the singer. Blend in a bounded,
+        // density-aware duration estimate only for those fast rows.
+        var fastness = Math.Clamp((density - 4.5) / 5.5, 0, 1);
         // Line-synchronised LRC does not tell us when individual words are sung.
         // The only deterministic interval is this row's timestamp to the next one.
         // Very short rows used to change on the same low-frequency render tick that
@@ -43,7 +50,18 @@ internal static class LyricTiming
         var completionLead = natural < 2.5
             ? Math.Clamp(natural * 0.08, 0.035, 0.09)
             : 0;
-        return Math.Clamp(elapsed / Math.Max(0.1, natural - completionLead), 0, 1);
+        completionLead += fastness * 0.06;
+        var sweepDuration = Math.Max(0.1, natural - completionLead);
+        if (fastness > 0)
+        {
+            var estimatedVocalDuration = units * secondsPerUnit;
+            var densityDuration = natural * (1 - fastness * 0.25);
+            var adaptiveDuration = Math.Clamp(
+                Math.Min(estimatedVocalDuration, densityDuration), natural * 0.7, sweepDuration);
+            sweepDuration += (adaptiveDuration - sweepDuration) * fastness;
+            elapsed += fastness * 0.06;
+        }
+        return Math.Clamp(elapsed / sweepDuration, 0, 1);
     }
 
     public static bool IsInstrumental(string? text) =>
@@ -86,6 +104,30 @@ internal static class LyricTiming
             var distance = Math.Abs((lines[index].Time - expectedPosition).TotalSeconds);
             if (distance > 15) continue;
             var score = currentSimilarity * 6 + nextSimilarity * 3 - distance * 0.12;
+            if (score <= bestScore) continue;
+            bestScore = score;
+            bestIndex = index;
+        }
+        return bestIndex;
+    }
+
+    public static int FindForwardRecoveryLine(
+        IReadOnlyList<LyricLine> lines, string current, string next, int afterIndex)
+    {
+        var bestIndex = -1;
+        var bestScore = double.NegativeInfinity;
+        for (var index = Math.Max(0, afterIndex + 1); index < lines.Count; index++)
+        {
+            if (IsInstrumental(lines[index].Text)) continue;
+            var currentSimilarity = Similarity(lines[index].Text, current);
+            if (currentSimilarity < 0.86) continue;
+            var nextSimilarity = index + 1 < lines.Count && !IsInstrumental(next)
+                ? Similarity(lines[index + 1].Text, next)
+                : 0;
+            if (!IsInstrumental(next) && nextSimilarity < 0.5) continue;
+            // Prefer the current+next pair. A tiny distance penalty resolves
+            // identical chorus lines in favour of the nearest forward match.
+            var score = currentSimilarity * 7 + nextSimilarity * 4 - (index - afterIndex) * 0.002;
             if (score <= bestScore) continue;
             bestScore = score;
             bestIndex = index;

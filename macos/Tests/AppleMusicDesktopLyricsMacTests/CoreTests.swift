@@ -50,6 +50,25 @@ final class CoreTests: XCTestCase {
         )
     }
 
+    func testHighDensityLineUsesAdaptiveFastSweep() {
+        let lines = [
+            LyricLine(time: 0, text: "諸行無常のリズムに合わせてワンツーステップ"),
+            LyricLine(time: 2, text: "次の歌詞")
+        ]
+        let progress = LyricTiming.progress(
+            lines: lines, index: 0, position: 1.5, secondsPerUnit: 0.08
+        )
+        XCTAssertEqual(progress, 1, accuracy: 0.001)
+    }
+
+    func testAdaptiveFastSweepDoesNotChangeSlowLine() {
+        let lines = [LyricLine(time: 0, text: "長音"), LyricLine(time: 4, text: "次の歌詞")]
+        XCTAssertEqual(
+            LyricTiming.progress(lines: lines, index: 0, position: 2, secondsPerUnit: 0.08),
+            0.5, accuracy: 0.001
+        )
+    }
+
     func testInstrumentalRowsNeverReceiveHighlightProgress() {
         let lines = [LyricLine(time: 0, text: "♪"), LyricLine(time: 5, text: "下一句")]
         XCTAssertEqual(
@@ -67,6 +86,21 @@ final class CoreTests: XCTestCase {
             LyricTiming.calibrationLine(
                 lines: lines, current: "相同一句！", next: "第二段", expectedPosition: 34.5
             ), 2
+        )
+    }
+
+    func testForwardRecoveryFindsLaterMatchingOfficialLine() {
+        let lines = [
+            LyricLine(time: 5, text: "最初の行"),
+            LyricLine(time: 8, text: "同じ言葉"),
+            LyricLine(time: 11, text: "一番"),
+            LyricLine(time: 35, text: "同じ言葉"),
+            LyricLine(time: 38, text: "二番")
+        ]
+        XCTAssertEqual(
+            LyricTiming.forwardRecoveryLine(
+                lines: lines, current: "同じ言葉", next: "二番", afterIndex: 1
+            ), 3
         )
     }
 

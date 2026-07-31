@@ -25,15 +25,28 @@ enum LyricTiming {
         guard index + 1 < lines.count else { return 1 }
         let natural = lines[index + 1].time - lines[index].time
         guard natural > 0 else { return 0 }
+        let units = vocalUnits(lines[index].text)
+        let density = units / natural
+        let fastness = min(1, max(0, (density - 4.5) / 5.5))
         // Keep normal rows tied to their timestamps. Fast rows receive only a
         // small bounded visual lead so the final sweep frame is not lost when
         // the next timestamp arrives.
-        let completionLead = natural < 2.5
+        var completionLead = natural < 2.5
             ? min(0.09, max(0.035, natural * 0.08))
             : 0
-        return min(1, max(0,
-            (position - lines[index].time) / max(0.1, natural - completionLead)
-        ))
+        completionLead += fastness * 0.06
+        var sweepDuration = max(0.1, natural - completionLead)
+        var elapsed = position - lines[index].time
+        if fastness > 0 {
+            let estimate = units * secondsPerUnit
+            let densityDuration = natural * (1 - fastness * 0.25)
+            let adaptiveDuration = min(
+                sweepDuration, max(natural * 0.7, min(estimate, densityDuration))
+            )
+            sweepDuration += (adaptiveDuration - sweepDuration) * fastness
+            elapsed += fastness * 0.06
+        }
+        return min(1, max(0, elapsed / sweepDuration))
     }
 
     static func isInstrumental(_ text: String) -> Bool {
@@ -67,6 +80,23 @@ enum LyricTiming {
             let distance = abs(lines[index].time - expectedPosition)
             guard distance <= 15 else { continue }
             let score = currentSimilarity * 6 + nextSimilarity * 3 - distance * 0.12
+            if best == nil || score > best!.score { best = (index, score) }
+        }
+        return best?.index
+    }
+
+    static func forwardRecoveryLine(
+        lines: [LyricLine], current: String, next: String, afterIndex: Int
+    ) -> Int? {
+        var best: (index: Int, score: Double)?
+        for index in lines.indices where index > afterIndex && !isInstrumental(lines[index].text) {
+            let currentSimilarity = similarity(lines[index].text, current)
+            guard currentSimilarity >= 0.86 else { continue }
+            let nextSimilarity = index + 1 < lines.count && !isInstrumental(next)
+                ? similarity(lines[index + 1].text, next) : 0
+            guard isInstrumental(next) || nextSimilarity >= 0.5 else { continue }
+            let score = currentSimilarity * 7 + nextSimilarity * 4 -
+                Double(index - afterIndex) * 0.002
             if best == nil || score > best!.score { best = (index, score) }
         }
         return best?.index

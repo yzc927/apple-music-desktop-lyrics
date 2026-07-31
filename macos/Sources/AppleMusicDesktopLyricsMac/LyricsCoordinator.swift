@@ -33,6 +33,9 @@ final class LyricsCoordinator: ObservableObject {
     private var lastProgressIndex = -1
     private var lastProgress = 0.0
     private var lrcSource: LyricsSource = .lrclib
+    private var recoveryOffset = 0.0
+    private var lastLineAdvancedAt = ProcessInfo.processInfo.systemUptime
+    private var uiPlaybackEvidenceUntil = 0.0
 
     init(settings: AppSettings) { self.settings = settings }
 
@@ -191,12 +194,16 @@ final class LyricsCoordinator: ObservableObject {
         }
         if !lrcLines.isEmpty {
             renderLRC(position: playbackPosition(for: track))
-            if settings.automaticLyricsCalibration && now - lastCalibrationReadAt >= 0.7 {
+            let stalled = now - lastLineAdvancedAt >= 6
+            if (settings.automaticLyricsCalibration || stalled) &&
+                now - lastCalibrationReadAt >= 0.7 {
                 lastCalibrationReadAt = now
                 if let snapshot = await Task.detached(priority: .utility, operation: { [appleLyrics] in
                     appleLyrics.read(track: track)
                 }).value, currentTrack?.key == track.key {
-                    applyCalibration(snapshot)
+                    if !stalled || !applyStallRecovery(snapshot) {
+                        applyCalibration(snapshot)
+                    }
                 }
             }
             return
@@ -217,7 +224,8 @@ final class LyricsCoordinator: ObservableObject {
     }
 
     private func playbackPosition(for track: TrackInfo, at now: Double = ProcessInfo.processInfo.systemUptime) -> Double {
-        track.position + (track.isPlaying ? max(0, min(2, now - sampledAt)) : 0)
+        track.position + ((track.isPlaying || now < uiPlaybackEvidenceUntil)
+            ? max(0, min(2, now - sampledAt)) : 0)
     }
 
     private func applyCandidate(_ index: Int, remember: Bool) {
@@ -261,7 +269,8 @@ final class LyricsCoordinator: ObservableObject {
         pendingCalibrationCount += 1
         guard pendingCalibrationCount >= 2, snapshot.current != calibrationAppleCurrent else { return }
         let rawPosition = playbackPosition(for: track)
-        let expected = rawPosition + (settings.automaticLyricsCalibration ? automaticOffset : 0) + offset
+        let expected = rawPosition + recoveryOffset +
+            (settings.automaticLyricsCalibration ? automaticOffset : 0) + offset
         guard let index = LyricTiming.calibrationLine(
             lines: lrcLines, current: snapshot.current, next: pendingCalibrationNext,
             expectedPosition: expected
@@ -277,6 +286,26 @@ final class LyricsCoordinator: ObservableObject {
             ? median : automaticOffset + min(0.2, max(-0.2, median - automaticOffset))))
         calibrationAppleCurrent = snapshot.current
         lastCalibrationLineIndex = index
+    }
+
+    private func applyStallRecovery(_ snapshot: AppleLyricSnapshot) -> Bool {
+        guard !snapshot.isInstrumental, !snapshot.current.isEmpty, let track = currentTrack,
+              let index = LyricTiming.forwardRecoveryLine(
+                lines: lrcLines, current: snapshot.current, next: snapshot.next,
+                afterIndex: lastRenderedIndex
+              ) else { return false }
+        let rawPosition = playbackPosition(for: track)
+        recoveryOffset = min(120, max(-120,
+            lrcLines[index].time - rawPosition - offset -
+            (settings.automaticLyricsCalibration ? automaticOffset : 0)
+        ))
+        lastRenderedIndex = index - 1
+        lastProgressIndex = -1
+        lastProgress = 0
+        lastLineAdvancedAt = ProcessInfo.processInfo.systemUptime
+        uiPlaybackEvidenceUntil = lastLineAdvancedAt + 5
+        showToast("检测到歌词停滞，已自动恢复同步")
+        return true
     }
 
     private func applyApple(_ snapshot: AppleLyricSnapshot, position: Double) {
@@ -299,9 +328,12 @@ final class LyricsCoordinator: ObservableObject {
     }
 
     private func renderLRC(position rawPosition: Double) {
-        let position = rawPosition + (settings.automaticLyricsCalibration ? automaticOffset : 0) + offset
+        let position = rawPosition + recoveryOffset +
+            (settings.automaticLyricsCalibration ? automaticOffset : 0) + offset
         var index = lrcLines.lastIndex { $0.time <= position } ?? -1
+        let previousIndex = lastRenderedIndex
         if lastRenderedIndex >= 0, index < lastRenderedIndex { index = lastRenderedIndex }
+        if index > previousIndex { lastLineAdvancedAt = ProcessInfo.processInfo.systemUptime }
         lastRenderedIndex = index
         if index < 0 {
             display.current = "•••"
@@ -332,6 +364,7 @@ final class LyricsCoordinator: ObservableObject {
 
     private func resetTimingState(keepTempo: Bool = false) {
         automaticOffset = 0
+        recoveryOffset = 0
         calibrationSamples = []
         calibrationAppleCurrent = ""
         pendingCalibrationCurrent = ""
@@ -341,6 +374,7 @@ final class LyricsCoordinator: ObservableObject {
         lastRenderedIndex = -1
         lastProgressIndex = -1
         lastProgress = 0
+        lastLineAdvancedAt = ProcessInfo.processInfo.systemUptime
         if !keepTempo { secondsPerVocalUnit = 0.28 }
     }
 }

@@ -56,6 +56,9 @@ internal sealed class MediaLyricsController : IDisposable
     private double _lastProgress;
     private bool _automaticCalibrationEnabled;
     private LyricsLoadKind _lyricsLoadKind;
+    private long _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
+    private long _lastWatchdogReadTicks;
+    private long _uiPlaybackEvidenceUntilTicks;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
@@ -265,8 +268,11 @@ internal sealed class MediaLyricsController : IDisposable
         // Clock corrections and Apple calibration are deliberately gradual. Never
         // let those tiny corrections move the displayed row backwards; a real seek
         // resets this guard in UpdatePlaybackClock.
+        var previousIndex = _lastRenderedIndex;
         if (_lastRenderedIndex >= 0 && index < _lastRenderedIndex)
             index = _lastRenderedIndex;
+        if (index > previousIndex)
+            _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
         _lastRenderedIndex = index;
         var current = index >= 0 ? LyricTiming.DisplayText(_lines[index].Text) : _title;
         var next = index + 1 < _lines.Count ? LyricTiming.DisplayText(_lines[index + 1].Text) : "";
@@ -284,8 +290,16 @@ internal sealed class MediaLyricsController : IDisposable
 
     private async Task PollAppleLyricsAsync()
     {
-        if ((!_usingAppleLyrics && (_lines.Count == 0 || !_automaticCalibrationEnabled)) ||
-            _applePolling || string.IsNullOrWhiteSpace(_title)) return;
+        if (_applePolling || string.IsNullOrWhiteSpace(_title)) return;
+        var nowTicks = Stopwatch.GetTimestamp();
+        var stalled = !_usingAppleLyrics && _lines.Count > 0 &&
+            Stopwatch.GetElapsedTime(_lastLineAdvancedTicks, nowTicks) >= TimeSpan.FromSeconds(6);
+        if (!_usingAppleLyrics && (_lines.Count == 0 || (!_automaticCalibrationEnabled && !stalled)))
+            return;
+        if (stalled && !_automaticCalibrationEnabled &&
+            Stopwatch.GetElapsedTime(_lastWatchdogReadTicks, nowTicks) < TimeSpan.FromMilliseconds(750))
+            return;
+        _lastWatchdogReadTicks = nowTicks;
         _applePolling = true;
         try
         {
@@ -294,7 +308,11 @@ internal sealed class MediaLyricsController : IDisposable
             {
                 _appleReadFailures = 0;
                 if (_usingAppleLyrics) ApplyAppleSnapshot(snapshot);
-                else ApplyCalibrationSnapshot(snapshot);
+                else
+                {
+                    if (stalled && ApplyStallRecoverySnapshot(snapshot)) return;
+                    ApplyCalibrationSnapshot(snapshot);
+                }
                 return;
             }
 
@@ -306,6 +324,26 @@ internal sealed class MediaLyricsController : IDisposable
         {
             _applePolling = false;
         }
+    }
+
+    private bool ApplyStallRecoverySnapshot(AppleLyricsSnapshot snapshot)
+    {
+        if (snapshot.IsInstrumental || string.IsNullOrWhiteSpace(snapshot.Current)) return false;
+        var lineIndex = LyricTiming.FindForwardRecoveryLine(
+            _lines, snapshot.Current, snapshot.Next, _lastRenderedIndex);
+        if (lineIndex < 0) return false;
+        var rawPosition = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        _automaticOffset = _lines[lineIndex].Time - rawPosition - _lyricsOffset;
+        _automaticOffset = TimeSpan.FromSeconds(
+            Math.Clamp(_automaticOffset.TotalSeconds, -120, 120));
+        _lastRenderedIndex = lineIndex - 1;
+        _lastProgressIndex = -1;
+        _lastProgress = 0;
+        _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
+        _uiPlaybackEvidenceUntilTicks = Stopwatch.GetTimestamp() +
+            (long)(Stopwatch.Frequency * 5d);
+        _notify("检测到歌词停滞，已自动恢复同步");
+        return true;
     }
 
     private void ApplyAppleSnapshot(AppleLyricsSnapshot snapshot)
@@ -405,6 +443,7 @@ internal sealed class MediaLyricsController : IDisposable
         _lastRenderedIndex = -1;
         _lastProgressIndex = -1;
         _lastProgress = 0;
+        _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
         _secondsPerVocalUnit = 0.28;
     }
 
@@ -454,8 +493,9 @@ internal sealed class MediaLyricsController : IDisposable
         var elapsed = TimeSpan.FromSeconds(Math.Max(0, elapsedSeconds));
         if (elapsed > TimeSpan.FromSeconds(2)) elapsed = TimeSpan.FromSeconds(2);
 
-        var advance = _clockPlaying ? elapsed : TimeSpan.Zero;
-        if (_clockPlaying && _clockCorrection != TimeSpan.Zero)
+        var shouldAdvance = _clockPlaying || nowTicks < _uiPlaybackEvidenceUntilTicks;
+        var advance = shouldAdvance ? elapsed : TimeSpan.Zero;
+        if (shouldAdvance && _clockCorrection != TimeSpan.Zero)
         {
             // Slew by at most 20% of real time. Negative correction still leaves
             // the playback clock moving forward at 80% speed.
