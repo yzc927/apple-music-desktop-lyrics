@@ -65,6 +65,9 @@ public partial class OverlayWindow : Window, IDisposable
     public int LyricsCandidateCount => _controller.LyricsCandidateCount;
     public int LyricsCandidateIndex => _controller.LyricsCandidateIndex;
     public string LyricsCandidateLabel => _controller.LyricsCandidateLabel;
+    public bool HasLocalLyricsOverride => _controller.HasLocalLyricsOverride;
+    public bool HasCachedLyrics => _controller.HasCachedLyrics;
+    public string CurrentLrcText => _controller.CurrentLrcText;
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
@@ -494,6 +497,18 @@ public partial class OverlayWindow : Window, IDisposable
     public void ResetLyricsOffset() => _controller.ResetOffset();
 
     public void ChangeLyricsCandidate(int delta) => _controller.ChangeLyricsCandidate(delta);
+
+    public bool SaveLocalLyrics(string lrc, string label, out string error) =>
+        _controller.SetLocalLyrics(lrc, label, out error);
+
+    public void RemoveLocalLyricsOverride() => _controller.RemoveLocalLyricsOverride();
+
+    public void ClearLyricsCache() => _controller.ClearLyricsCache();
+
+    public void RefreshArtistColor()
+    {
+        if (_autoColor) ApplyAutomaticColor(_lastArtist);
+    }
 
     public void ToggleAutomaticLyricsCalibration()
     {

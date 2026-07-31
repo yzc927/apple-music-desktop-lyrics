@@ -7,6 +7,7 @@ final class LyricsCoordinator: ObservableObject {
     private let player = AppleMusicPlayer()
     private let appleLyrics = AppleMusicAccessibilityLyricsProvider()
     private let lrclib = LRCLIBClient()
+    private let localLyrics = LocalLyricsStore.shared
     private let settings: AppSettings
     private var pollTimer: Timer?
     private var renderTimer: Timer?
@@ -31,19 +32,23 @@ final class LyricsCoordinator: ObservableObject {
     private var lastRenderedIndex = -1
     private var lastProgressIndex = -1
     private var lastProgress = 0.0
+    private var lrcSource: LyricsSource = .lrclib
 
     init(settings: AppSettings) { self.settings = settings }
 
     var songKey: String { currentTrack?.key ?? "" }
     var offset: Double { settings.offset(for: songKey) }
     var lyricCandidateCount: Int { candidates.count }
+    var currentLRCText: String { LRCParser.serialize(lrcLines) }
+    var hasLocalLyricsOverride: Bool { localLyrics.hasOverride(songKey) }
+    var hasCachedLyrics: Bool { localLyrics.hasCache(songKey) }
 
     func start() {
         requestPermissions()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [coordinator = self] _ in
             Task { @MainActor in await coordinator.poll() }
         }
-        renderTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [coordinator = self] _ in
+        renderTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [coordinator = self] _ in
             Task { @MainActor in coordinator.renderFrame() }
         }
         Task { await poll() }
@@ -90,6 +95,28 @@ final class LyricsCoordinator: ObservableObject {
         candidateIndex = -1
         resetTimingState()
         Task { await poll(forceReload: true) }
+    }
+
+    func setLocalLyrics(_ text: String, label: String = "手动编辑") -> String? {
+        guard !songKey.isEmpty else { return "请先播放一首歌曲" }
+        let parsed = LRCParser.parse(text)
+        guard !parsed.isEmpty else { return "没有找到有效时间戳，请使用 [mm:ss.xx] 歌词 格式" }
+        localLyrics.setOverride(text, label: label, for: songKey)
+        applyStoredLyrics(localLyrics.override(for: songKey)!, source: .local)
+        showToast("已保存本地歌词")
+        return nil
+    }
+
+    func removeLocalLyricsOverride() {
+        guard !songKey.isEmpty else { return }
+        localLyrics.removeOverride(for: songKey)
+        showToast("已删除本地覆盖")
+        refresh()
+    }
+
+    func clearLyricsCache() {
+        localLyrics.clearCache()
+        showToast("已清空歌词缓存")
     }
 
     func showToast(_ message: String) {
@@ -147,13 +174,19 @@ final class LyricsCoordinator: ObservableObject {
 
         if loadingKey != track.key {
             loadingKey = track.key
-            let loaded = await lrclib.candidates(for: track)
-            guard currentTrack?.key == track.key else { return }
-            candidates = loaded
-            if !loaded.isEmpty {
-                let remembered = settings.lyricChoice(for: track.key)
-                let selected = remembered.flatMap { key in loaded.firstIndex { $0.key == key } } ?? 0
-                applyCandidate(selected, remember: false)
+            if let stored = localLyrics.override(for: track.key) {
+                applyStoredLyrics(stored, source: .local)
+            } else {
+                let loaded = await lrclib.candidates(for: track)
+                guard currentTrack?.key == track.key else { return }
+                candidates = loaded
+                if !loaded.isEmpty {
+                    let remembered = settings.lyricChoice(for: track.key)
+                    let selected = remembered.flatMap { key in loaded.firstIndex { $0.key == key } } ?? 0
+                    applyCandidate(selected, remember: false)
+                } else if let stored = localLyrics.cached(for: track.key) {
+                    applyStoredLyrics(stored, source: .cache)
+                }
             }
         }
         if !lrcLines.isEmpty {
@@ -196,6 +229,23 @@ final class LyricsCoordinator: ObservableObject {
         display.lyricVersion = candidates[index].label
         display.lyricVersionPosition = "\(index + 1)/\(candidates.count)"
         if remember { settings.setLyricChoice(candidates[index].key, for: songKey) }
+        lrcSource = .lrclib
+        localLyrics.setCache(
+            LRCParser.serialize(lrcLines), label: candidates[index].label, for: songKey
+        )
+    }
+
+    private func applyStoredLyrics(_ stored: StoredLyrics, source: LyricsSource) {
+        let parsed = LRCParser.parse(stored.lrc)
+        guard !parsed.isEmpty else { return }
+        lrcLines = parsed
+        candidates = []
+        candidateIndex = -1
+        secondsPerVocalUnit = LyricTiming.secondsPerUnit(lrcLines)
+        lrcSource = source
+        resetTimingState(keepTempo: true)
+        display.lyricVersion = stored.label
+        display.lyricVersionPosition = ""
     }
 
     private func applyCalibration(_ snapshot: AppleLyricSnapshot) {
@@ -268,7 +318,7 @@ final class LyricsCoordinator: ObservableObject {
             lastProgress = progress
             display.progress = progress
         }
-        display.source = .lrclib
+        display.source = lrcSource
     }
 
     private func renderUnavailable(_ track: TrackInfo) {

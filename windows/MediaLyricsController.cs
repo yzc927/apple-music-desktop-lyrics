@@ -6,12 +6,15 @@ namespace AppleMusicDesktopLyrics;
 
 internal sealed class MediaLyricsController : IDisposable
 {
+    private enum LyricsLoadKind { None, Lrclib, Cache, Local, Apple }
+
     private readonly Action<string, string, double, string> _render;
     private readonly Action<string> _notify;
     private readonly LyricsClient _lyricsClient = new();
     private readonly AppleMusicUiLyricsProvider _appleLyrics = new();
     private readonly SongOffsetStore _offsetStore = new();
     private readonly SongLyricsChoiceStore _choiceStore = new();
+    private readonly LocalLyricsStore _localLyrics = new();
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _applePollTimer;
@@ -52,12 +55,15 @@ internal sealed class MediaLyricsController : IDisposable
     private int _lastProgressIndex = -1;
     private double _lastProgress;
     private bool _automaticCalibrationEnabled;
+    private LyricsLoadKind _lyricsLoadKind;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
         _render = render;
         _notify = notify;
-        _renderTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Render,
+        // 30 fps keeps short/rap lines smooth. At the old 100 ms cadence a
+        // 150–250 ms LRC row only received one or two partial sweep frames.
+        _renderTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render,
             (_, _) => Render(), Dispatcher.CurrentDispatcher);
         _pollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
             async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
@@ -74,9 +80,18 @@ internal sealed class MediaLyricsController : IDisposable
         : "自动匹配";
     public string LyricsSource => _usingAppleLyrics
         ? "Apple Music 官方歌词（后备）"
-        : _lines.Count > 0
-            ? _hasAutoCalibration ? "LRCLIB 同步歌词（Apple 自动对时）" : "LRCLIB 同步歌词（优先）"
-            : "正在获取歌词";
+        : _lyricsLoadKind switch
+        {
+            LyricsLoadKind.Local => "本地 LRC（永久覆盖）",
+            LyricsLoadKind.Cache => "LRCLIB 本地缓存（离线后备）",
+            LyricsLoadKind.Lrclib => _hasAutoCalibration
+                ? "LRCLIB 同步歌词（Apple 自动对时）"
+                : "LRCLIB 同步歌词（优先）",
+            _ => "正在获取歌词"
+        };
+    public bool HasLocalLyricsOverride => _localLyrics.HasOverride(_mediaKey);
+    public bool HasCachedLyrics => _localLyrics.HasCache(_mediaKey);
+    public string CurrentLrcText => _lines.Count == 0 ? "" : LrcParser.Serialize(_lines);
 
     public async void Start()
     {
@@ -143,6 +158,7 @@ internal sealed class MediaLyricsController : IDisposable
             _candidates = [];
             _candidateIndex = -1;
             _usingAppleLyrics = false;
+            _lyricsLoadKind = LyricsLoadKind.None;
             _appleCurrent = "";
             _appleNext = "";
             _appleInstrumental = false;
@@ -185,6 +201,9 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts = new CancellationTokenSource();
         try
         {
+            var local = _localLyrics.GetOverride(_mediaKey);
+            if (local is not null && TryApplyStoredLyrics(local, LyricsLoadKind.Local)) return;
+
             var search = await _lyricsClient.SearchAsync(title, artist, album, duration, _lyricsCts.Token);
             _candidates = search.Candidates;
             if (_candidates.Count > 0)
@@ -197,6 +216,8 @@ internal sealed class MediaLyricsController : IDisposable
                 return;
             }
 
+            var cached = _localLyrics.GetCache(_mediaKey);
+            if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
             if (await TryAppleLyricsFallbackAsync(title)) return;
             _render(title, "未找到同步歌词", 0, _artist);
         }
@@ -205,6 +226,8 @@ internal sealed class MediaLyricsController : IDisposable
         {
             try
             {
+                var cached = _localLyrics.GetCache(_mediaKey);
+                if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
                 if (await TryAppleLyricsFallbackAsync(title)) return;
             }
             catch (OperationCanceledException) { return; }
@@ -218,6 +241,7 @@ internal sealed class MediaLyricsController : IDisposable
         var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
         if (appleSnapshot is null) return false;
         _usingAppleLyrics = true;
+        _lyricsLoadKind = LyricsLoadKind.Apple;
         ApplyAppleSnapshot(appleSnapshot);
         return true;
     }
@@ -360,7 +384,10 @@ internal sealed class MediaLyricsController : IDisposable
         if (index < 0 || index >= _candidates.Count) return;
         _candidateIndex = index;
         _lines = _candidates[index].Lines;
+        _usingAppleLyrics = false;
+        _lyricsLoadKind = LyricsLoadKind.Lrclib;
         if (remember) _choiceStore.Set(_mediaKey, _candidates[index].Key);
+        _localLyrics.SetCache(_mediaKey, LrcParser.Serialize(_lines), _candidates[index].Label);
         ResetTimingState();
         _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
     }
@@ -455,6 +482,58 @@ internal sealed class MediaLyricsController : IDisposable
         if (next < 0) next += _candidates.Count;
         ApplyCandidate(next, remember: true);
         ShowTransient($"已切换歌词版本 {_candidateIndex + 1}/{_candidates.Count}");
+    }
+
+    private bool TryApplyStoredLyrics(StoredLyrics stored, LyricsLoadKind kind)
+    {
+        var parsed = LrcParser.Parse(stored.Lrc);
+        if (parsed.Count == 0) return false;
+        _lines = parsed;
+        _candidates = [];
+        _candidateIndex = -1;
+        _usingAppleLyrics = false;
+        _lyricsLoadKind = kind;
+        ResetTimingState();
+        _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
+        return true;
+    }
+
+    public bool SetLocalLyrics(string lrc, string label, out string error)
+    {
+        if (string.IsNullOrWhiteSpace(_mediaKey))
+        {
+            error = "当前没有正在播放的歌曲";
+            return false;
+        }
+        var parsed = LrcParser.Parse(lrc);
+        if (parsed.Count == 0)
+        {
+            error = "没有找到 [分:秒] 格式的有效时间戳";
+            return false;
+        }
+        _localLyrics.SetOverride(_mediaKey, LrcParser.Serialize(parsed), label);
+        TryApplyStoredLyrics(_localLyrics.GetOverride(_mediaKey)!, LyricsLoadKind.Local);
+        error = "";
+        ShowTransient($"已保存本地歌词（{parsed.Count} 行）");
+        return true;
+    }
+
+    public void RemoveLocalLyricsOverride()
+    {
+        if (!_localLyrics.HasOverride(_mediaKey))
+        {
+            ShowTransient("当前歌曲没有本地歌词覆盖");
+            return;
+        }
+        _localLyrics.RemoveOverride(_mediaKey);
+        ShowTransient("已删除本地覆盖，正在重新获取歌词");
+        RefreshLyrics();
+    }
+
+    public void ClearLyricsCache()
+    {
+        _localLyrics.ClearCache();
+        ShowTransient("LRCLIB 本地缓存已清空");
     }
 
     public void SetAutomaticCalibration(bool enabled, bool notify = true)

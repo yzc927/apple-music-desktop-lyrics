@@ -25,9 +25,15 @@ enum LyricTiming {
         guard index + 1 < lines.count else { return 1 }
         let natural = lines[index + 1].time - lines[index].time
         guard natural > 0 else { return 0 }
-        // LRC only supplies line starts. Using the real interval is deterministic;
-        // shortening it from character count makes slow lyrics finish too early.
-        return min(1, max(0, (position - lines[index].time) / max(0.1, natural)))
+        // Keep normal rows tied to their timestamps. Fast rows receive only a
+        // small bounded visual lead so the final sweep frame is not lost when
+        // the next timestamp arrives.
+        let completionLead = natural < 2.5
+            ? min(0.09, max(0.035, natural * 0.08))
+            : 0
+        return min(1, max(0,
+            (position - lines[index].time) / max(0.1, natural - completionLead)
+        ))
     }
 
     static func isInstrumental(_ text: String) -> Bool {

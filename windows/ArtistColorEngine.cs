@@ -140,7 +140,10 @@ internal static partial class ArtistColorEngine
         return new ArtistPalette(identity, [ResolveSingle(identity, unknownArtistColor)]);
     }
 
-    public static IReadOnlyList<ArtistPalette> GetCuratedPalettes() => Curated
+    public static IReadOnlyList<ArtistPalette> GetCuratedPalettes() =>
+        CustomArtistPaletteStore.Current.GetAll()
+        .Select(item => new KeyValuePair<string, string[]>(item.Identity, item.Colors))
+        .Concat(Curated)
         .Concat(AdditionalArtistColors.Palettes)
         .DistinctBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .OrderBy(item => item.Key, StringComparer.CurrentCultureIgnoreCase)
@@ -160,8 +163,11 @@ internal static partial class ArtistColorEngine
     internal static string NormalizeArtistKey(string value) =>
         string.Concat(value.Where(character => !char.IsWhiteSpace(character))).ToUpperInvariant();
 
-    private static bool TryGetCurated(string artist, out string[] colors) =>
-        CuratedByNormalizedName.TryGetValue(NormalizeArtistKey(artist), out colors!);
+    private static bool TryGetCurated(string artist, out string[] colors)
+    {
+        if (CustomArtistPaletteStore.Current.TryGet(artist, out colors)) return true;
+        return CuratedByNormalizedName.TryGetValue(NormalizeArtistKey(artist), out colors!);
+    }
 
     private static string StripAlbum(string value)
     {

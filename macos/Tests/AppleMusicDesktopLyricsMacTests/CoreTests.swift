@@ -42,6 +42,14 @@ final class CoreTests: XCTestCase {
         )
     }
 
+    func testFastLineCompletesJustBeforeNextTimestamp() {
+        let lines = [LyricLine(time: 0, text: "快速歌词"), LyricLine(time: 1, text: "下一句")]
+        XCTAssertEqual(
+            LyricTiming.progress(lines: lines, index: 0, position: 0.92, secondsPerUnit: 0.28),
+            1, accuracy: 0.001
+        )
+    }
+
     func testInstrumentalRowsNeverReceiveHighlightProgress() {
         let lines = [LyricLine(time: 0, text: "♪"), LyricLine(time: 5, text: "下一句")]
         XCTAssertEqual(

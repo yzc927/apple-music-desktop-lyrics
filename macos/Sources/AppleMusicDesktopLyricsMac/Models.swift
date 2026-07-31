@@ -27,6 +27,8 @@ enum LyricsSource: String {
     case waiting = "等待 Apple Music"
     case appleMusic = "Apple Music 官方歌词"
     case lrclib = "LRCLIB 同步歌词"
+    case cache = "LRCLIB 本地缓存"
+    case local = "本地 LRC（永久覆盖）"
     case unavailable = "未找到同步歌词"
 }
 

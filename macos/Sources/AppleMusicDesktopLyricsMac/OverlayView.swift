@@ -4,6 +4,7 @@ import SwiftUI
 struct OverlayView: View {
     @ObservedObject var display: LyricsDisplayState
     @ObservedObject var settings: AppSettings
+    @ObservedObject private var customPalettes = CustomArtistPaletteStore.shared
     let coordinator: LyricsCoordinator
     let close: () -> Void
 

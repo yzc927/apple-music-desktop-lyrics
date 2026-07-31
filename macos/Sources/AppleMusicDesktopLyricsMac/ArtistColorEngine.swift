@@ -59,7 +59,10 @@ enum ArtistColorEngine {
 
     static var curatedPalettes: [(identity: String, colors: [String])] {
         var seen = Set<String>()
-        return (Array(curated) + Array(additionalCurated))
+        let custom = CustomArtistPaletteStore.shared.palettes.map {
+            (key: $0.identity, value: $0.colors)
+        }
+        return (custom + Array(curated) + Array(additionalCurated))
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
             .compactMap { item in
                 seen.insert(normalizedKey(for: item.key)).inserted ? (item.key, item.value) : nil
@@ -78,7 +81,8 @@ enum ArtistColorEngine {
                 identity = String(identity[actorsRange]).trimmingCharacters(in: .whitespaces)
             }
         }
-        if let exact = curatedByNormalizedName[normalizedKey(for: identity)] { return exact }
+        if let exact = CustomArtistPaletteStore.shared.colors(for: identity) ??
+            curatedByNormalizedName[normalizedKey(for: identity)] { return exact }
         let separators = try? NSRegularExpression(pattern: #"\s*(?:&|＆|×)\s*|\s+(?:feat\.?|featuring|with|x)\s+|\s*、\s*|\s*,\s*"#, options: .caseInsensitive)
         let range = NSRange(identity.startIndex..., in: identity)
         let artists = separators?.stringByReplacingMatches(in: identity, range: range, withTemplate: "\u{1F}")
@@ -92,6 +96,7 @@ enum ArtistColorEngine {
     }
 
     private static func singleColor(_ artist: String, unknownArtistColor: String?) -> String {
+        if let color = CustomArtistPaletteStore.shared.colors(for: artist)?.first { return color }
         if let color = curatedByNormalizedName[normalizedKey(for: artist)]?.first { return color }
         if let unknownArtistColor, !unknownArtistColor.isEmpty { return unknownArtistColor }
         var hash: UInt32 = 2_166_136_261

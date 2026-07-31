@@ -35,9 +35,15 @@ internal static class LyricTiming
         if (natural <= 0) return 0;
         var elapsed = (position - lines[index].Time).TotalSeconds;
         // Line-synchronised LRC does not tell us when individual words are sung.
-        // The only deterministic interval is this row's timestamp to the next one;
-        // never guess a shorter duration from character count.
-        return Math.Clamp(elapsed / Math.Max(0.1, natural), 0, 1);
+        // The only deterministic interval is this row's timestamp to the next one.
+        // Very short rows used to change on the same low-frequency render tick that
+        // should have completed their sweep, so they could disappear at 50–80%.
+        // Finish a fast row by a small, bounded visual lead while preserving the
+        // full timestamp interval for normal and slow lyrics.
+        var completionLead = natural < 2.5
+            ? Math.Clamp(natural * 0.08, 0.035, 0.09)
+            : 0;
+        return Math.Clamp(elapsed / Math.Max(0.1, natural - completionLead), 0, 1);
     }
 
     public static bool IsInstrumental(string? text) =>

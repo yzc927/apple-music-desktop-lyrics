@@ -28,4 +28,14 @@ enum LRCParser {
             LyricLine(time: time, text: Array(Set(values.map(\.text))).sorted().joined(separator: " / "))
         }.sorted { $0.time < $1.time }
     }
+
+    static func serialize(_ lines: [LyricLine]) -> String {
+        lines.map { line in
+            let minutes = Int(line.time) / 60
+            let seconds = Int(line.time) % 60
+            let hundredths = Int((line.time * 100).rounded()) % 100
+            let text = LyricTiming.isInstrumental(line.text) ? "" : line.text
+            return String(format: "[%02d:%02d.%02d] %@", minutes, seconds, hundredths, text)
+        }.joined(separator: "\n")
+    }
 }

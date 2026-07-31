@@ -36,4 +36,9 @@ internal static partial class LrcParser
                 string.Join(" / ", group.Select(x => x.Text).Distinct())))
             .ToArray();
     }
+
+    public static string Serialize(IReadOnlyList<LyricLine> lines) => string.Join(Environment.NewLine,
+        lines.Select(line =>
+            $"[{(int)line.Time.TotalMinutes:00}:{line.Time.Seconds:00}.{line.Time.Milliseconds / 10:00}] " +
+            (LyricTiming.IsInstrumental(line.Text) ? "" : line.Text)));
 }
