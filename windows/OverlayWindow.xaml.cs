@@ -36,7 +36,7 @@ public partial class OverlayWindow : Window, IDisposable
     private readonly RectangleGeometry _highlightClip = new();
     private System.Windows.Media.Color _highlightColor = System.Windows.Media.Color.FromRgb(255, 59, 48);
     private bool _autoColor;
-    private bool _automaticLyricsCalibration;
+    private bool _automaticLyricsCalibration = true;
     private bool _karaokeMode;
     private string _fontFamily = "Microsoft YaHei UI";
     private string _lastArtist = "";
@@ -650,7 +650,7 @@ public partial class OverlayWindow : Window, IDisposable
     private sealed record OverlaySettings(string HighlightColor, bool AutoColor = false,
         double? Left = null, double? Top = null, double? Width = null, double? Height = null,
         string? FontFamily = null, bool Locked = false, bool AlwaysOnTop = true,
-        bool ClickThrough = false, bool AutomaticLyricsCalibration = false,
+        bool ClickThrough = false, bool AutomaticLyricsCalibration = true,
         bool KaraokeMode = false);
 
     public void ToggleClickThrough()

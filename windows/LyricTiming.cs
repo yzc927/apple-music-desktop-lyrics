@@ -102,7 +102,11 @@ internal static class LyricTiming
                 ? Similarity(lines[index + 1].Text, next)
                 : 0;
             var distance = Math.Abs((lines[index].Time - expectedPosition).TotalSeconds);
-            if (distance > 15) continue;
+            // A matching current+next pair is strong enough to recover from a
+            // badly stale GSMTC clock. A current-line-only match stays local so
+            // repeated chorus rows cannot cause a large jump.
+            var strongPair = currentSimilarity >= 0.9 && nextSimilarity >= 0.72;
+            if (distance > (strongPair ? 120 : 15)) continue;
             var score = currentSimilarity * 6 + nextSimilarity * 3 - distance * 0.12;
             if (score <= bestScore) continue;
             bestScore = score;

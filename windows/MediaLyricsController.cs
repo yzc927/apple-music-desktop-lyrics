@@ -398,7 +398,19 @@ internal sealed class MediaLyricsController : IDisposable
         // remembered manual offset is intentionally applied afterwards and must
         // never be cancelled by background calibration.
         var correction = (_lines[lineIndex].Time - rawPosition).TotalSeconds;
-        if (Math.Abs(correction) > 8) return;
+        if (Math.Abs(correction) > 120) return;
+        if (!_hasAutoCalibration && Math.Abs(correction) > 8)
+        {
+            _automaticOffset = TimeSpan.FromSeconds(correction);
+            _hasAutoCalibration = true;
+            _calibrationAppleCurrent = snapshot.Current;
+            _lastCalibrationLineIndex = lineIndex;
+            _lastRenderedIndex = lineIndex - 1;
+            _lastProgressIndex = -1;
+            _lastProgress = 0;
+            _notify("已按 Apple Music 当前歌词恢复同步");
+            return;
+        }
         var current = _automaticOffset.TotalSeconds;
         if (_hasAutoCalibration && Math.Abs(correction - current) > 1.25) return;
         _calibrationSamples.Enqueue(correction);
@@ -473,6 +485,12 @@ internal sealed class MediaLyricsController : IDisposable
             _clockCorrection = TimeSpan.Zero;
             _automaticOffset = TimeSpan.Zero;
             _calibrationSamples.Clear();
+            _calibrationAppleCurrent = "";
+            _hasAutoCalibration = false;
+            _pendingCalibrationCurrent = "";
+            _pendingCalibrationNext = "";
+            _pendingCalibrationCount = 0;
+            _lastCalibrationLineIndex = -1;
             _lastRenderedIndex = -1;
             _lastProgressIndex = -1;
             _lastProgress = 0;
@@ -581,7 +599,7 @@ internal sealed class MediaLyricsController : IDisposable
         _automaticCalibrationEnabled = enabled;
         ResetTimingState();
         if (notify)
-            ShowTransient(enabled ? "已开启 Apple 实验自动对时" : "已关闭 Apple 自动对时");
+            ShowTransient(enabled ? "已开启 Apple 自动对时" : "已关闭 Apple 自动对时");
     }
 
     public void RefreshLyrics()

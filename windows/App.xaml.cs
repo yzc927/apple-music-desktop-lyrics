@@ -8,13 +8,17 @@ public partial class App : System.Windows.Application
     private OverlayWindow? _window;
     private ManagementWindow? _management;
     private Forms.NotifyIcon? _tray;
+    private AppleMusicFollowService? _followService;
+    private Forms.ToolStripMenuItem? _followItem;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         _window = new OverlayWindow();
-        _window.Show();
+        _followService = new AppleMusicFollowService();
+        _followService.RunningChanged += ApplyAppleMusicRunningState;
+        if (!_followService.Enabled) _window.Show();
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("打开管理界面", null, (_, _) => Dispatcher.Invoke(ShowManagement));
@@ -23,6 +27,13 @@ public partial class App : System.Windows.Application
         {
             if (_window.IsVisible) _window.HideToTray(); else _window.ShowFromTray();
         }));
+        _followItem = new Forms.ToolStripMenuItem("跟随 Apple Music 自动显示 / 隐藏")
+        {
+            CheckOnClick = false,
+            Checked = _followService.Enabled
+        };
+        _followItem.Click += (_, _) => Dispatcher.Invoke(ToggleFollowAppleMusic);
+        menu.Items.Add(_followItem);
         var lockItem = new Forms.ToolStripMenuItem("锁定位置和大小") { CheckOnClick = false };
         lockItem.Click += (_, _) => Dispatcher.Invoke(() => _window.ToggleLock());
         menu.Items.Add(lockItem);
@@ -54,6 +65,7 @@ public partial class App : System.Windows.Application
             topmostItem.Checked = _window.IsPinned;
             autoColorItem.Checked = _window.IsAutoColor;
             clickThroughItem.Checked = _window.IsClickThrough;
+            if (_followItem is not null) _followItem.Checked = _followService?.Enabled == true;
         });
 
         _tray = new Forms.NotifyIcon
@@ -67,6 +79,45 @@ public partial class App : System.Windows.Application
         {
             if (_window.IsVisible) _window.HideToTray(); else _window.ShowFromTray();
         });
+        _followService.Start();
+        if (e.Args.Any(argument => string.Equals(
+                argument, "--management", StringComparison.OrdinalIgnoreCase)))
+            ShowManagement();
+    }
+
+    private void ToggleFollowAppleMusic()
+    {
+        if (_window is null || _followService is null) return;
+        _followService.SetEnabled(!_followService.Enabled);
+        if (_followItem is not null) _followItem.Checked = _followService.Enabled;
+        if (_followService.Enabled)
+        {
+            ApplyAppleMusicRunningState(_followService.IsAppleMusicRunning());
+            if (_followService.StartupRegistrationError is { Length: > 0 } error)
+            {
+                System.Windows.MessageBox.Show(
+                    "跟随功能已开启，但无法加入 Windows 登录启动项：\n" + error,
+                    "Apple Music 桌面歌词");
+            }
+        }
+        else
+        {
+            _window.ShowFromTray();
+        }
+    }
+
+    private void ApplyAppleMusicRunningState(bool running)
+    {
+        if (_window is null || _followService?.Enabled != true) return;
+        if (running)
+        {
+            _window.ShowFromTray();
+        }
+        else
+        {
+            _management?.Hide();
+            _window.HideToTray();
+        }
     }
 
     private void ShowManagement()
@@ -85,6 +136,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _followService?.Dispose();
         _tray?.Dispose();
         _window?.Dispose();
         base.OnExit(e);

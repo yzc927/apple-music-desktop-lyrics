@@ -3,6 +3,7 @@
 **/obj/
 **/publish/
 **/publish-update/
+**/publish-next/
 **/artifacts/
 **/.build/
 **/.swiftpm/
