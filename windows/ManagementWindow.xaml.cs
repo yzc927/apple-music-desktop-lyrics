@@ -46,7 +46,10 @@ public partial class ManagementWindow : Window
         AutoModeButton.Content = _overlay.IsAutoColor ? "关闭自动配色" : "开启自动配色";
         AutoTimingButton.Content = _overlay.IsAutomaticLyricsCalibration
             ? "关闭 Apple 自动对时" : "开启 Apple 自动对时";
-        KaraokeModeButton.Content = _overlay.IsKaraokeMode ? "普通模式" : "卡拉 OK 模式";
+        KaraokeModeButton.Content = _overlay.IsKaraokeMode ? "卡拉 OK 模式" : "普通模式";
+        KaraokeModeButton.ToolTip = _overlay.IsKaraokeMode
+            ? "当前为卡拉 OK 扫色模式；点击切换为普通整句模式"
+            : "当前为普通整句模式；点击切换为卡拉 OK 扫色模式";
         KaraokeModeDescription.Text = _overlay.IsKaraokeMode
             ? "当前按播放进度从左向右扫色。"
             : "当前整句从一开始就完整显示颜色。";
