@@ -54,6 +54,8 @@ internal sealed class MediaLyricsController : IDisposable
     private int _lastCalibrationLineIndex = -1;
     private int _lastProgressIndex = -1;
     private double _lastProgress;
+    private int _completionHoldIndex = -1;
+    private long _completionHoldStartedTicks;
     private bool _automaticCalibrationEnabled;
     private LyricsLoadKind _lyricsLoadKind;
     private long _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
@@ -271,6 +273,33 @@ internal sealed class MediaLyricsController : IDisposable
         var previousIndex = _lastRenderedIndex;
         if (_lastRenderedIndex >= 0 && index < _lastRenderedIndex)
             index = _lastRenderedIndex;
+        var renderTicks = Stopwatch.GetTimestamp();
+        if (previousIndex < 0 || index <= previousIndex)
+            _completionHoldIndex = -1;
+        if (previousIndex >= 0 && index == previousIndex + 1)
+        {
+            if (_completionHoldIndex == index)
+            {
+                if (Stopwatch.GetElapsedTime(_completionHoldStartedTicks, renderTicks) <
+                    TimeSpan.FromMilliseconds(100))
+                {
+                    RenderCompletedPreviousLine(previousIndex);
+                    return;
+                }
+                _completionHoldIndex = -1;
+            }
+            else if (_lastProgressIndex == previousIndex && _lastProgress < 0.92 &&
+                     !LyricTiming.IsInstrumental(_lines[previousIndex].Text))
+            {
+                // A delayed media-clock sample can cross the next timestamp before
+                // the final sweep frames are rendered. Briefly show the completed
+                // row so it never disappears while visibly half filled.
+                _completionHoldIndex = index;
+                _completionHoldStartedTicks = renderTicks;
+                RenderCompletedPreviousLine(previousIndex);
+                return;
+            }
+        }
         if (index > previousIndex)
             _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
         _lastRenderedIndex = index;
@@ -286,6 +315,15 @@ internal sealed class MediaLyricsController : IDisposable
         }
         _lastProgress = progress;
         _render(current, next, Math.Clamp(progress, 0, 1), _artist);
+    }
+
+    private void RenderCompletedPreviousLine(int index)
+    {
+        var current = LyricTiming.DisplayText(_lines[index].Text);
+        var next = index + 1 < _lines.Count ? LyricTiming.DisplayText(_lines[index + 1].Text) : "";
+        _lastProgressIndex = index;
+        _lastProgress = 1;
+        _render(current, next, 1, _artist);
     }
 
     private async Task PollAppleLyricsAsync()

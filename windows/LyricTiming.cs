@@ -47,9 +47,7 @@ internal static class LyricTiming
         // should have completed their sweep, so they could disappear at 50–80%.
         // Finish a fast row by a small, bounded visual lead while preserving the
         // full timestamp interval for normal and slow lyrics.
-        var completionLead = natural < 2.5
-            ? Math.Clamp(natural * 0.08, 0.035, 0.09)
-            : 0;
+        var completionLead = Math.Clamp(natural * 0.12, 0.09, 0.4);
         completionLead += fastness * 0.06;
         var sweepDuration = Math.Max(0.1, natural - completionLead);
         if (fastness > 0)
