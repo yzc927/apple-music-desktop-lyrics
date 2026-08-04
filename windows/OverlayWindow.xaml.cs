@@ -4,11 +4,13 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using System.Windows.Controls;
 
 namespace AppleMusicDesktopLyrics;
 
@@ -34,6 +36,7 @@ public partial class OverlayWindow : Window, IDisposable
     private double _highlightTextStart;
     private double _highlightTextWidth;
     private readonly RectangleGeometry _highlightClip = new();
+    private readonly RectangleGeometry _rubyHighlightClip = new();
     private System.Windows.Media.Color _highlightColor = System.Windows.Media.Color.FromRgb(255, 59, 48);
     private bool _autoColor;
     private bool _automaticLyricsCalibration = true;
@@ -85,6 +88,8 @@ public partial class OverlayWindow : Window, IDisposable
         _unlockedHitTestTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50),
             DispatcherPriority.Input, (_, _) => TrackUnlockedPointer(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
+        CurrentRubyHighlightLine.Clip = _rubyHighlightClip;
+        CurrentRubyHighlightLine.SizeChanged += (_, _) => UpdateHighlightClip();
         Loaded += OnLoaded;
         LocationChanged += (_, _) => SchedulePlacementSave();
         SizeChanged += (_, _) =>
@@ -141,6 +146,10 @@ public partial class OverlayWindow : Window, IDisposable
         CurrentLine.FontSize = 30 * scale;
         CurrentHighlightLine.FontSize = 30 * scale;
         NextLine.FontSize = 19 * scale;
+        CurrentRubyGrid.Height = CurrentLine.FontSize * 0.58;
+        NextRubyLine.Height = NextLine.FontSize * 0.60;
+        UpdateHighlightMetrics();
+        RefreshRubyLines();
         ScheduleToolbarPlacement();
     }
 
@@ -156,9 +165,13 @@ public partial class OverlayWindow : Window, IDisposable
             CurrentLine.Text = current;
             CurrentHighlightLine.Text = current;
             UpdateHighlightMetrics();
+            BuildCurrentRuby(current);
         }
         if (!string.Equals(NextLine.Text, next, StringComparison.Ordinal))
+        {
             NextLine.Text = next;
+            BuildNextRuby(next);
+        }
         _highlightProgress = Math.Clamp(progress, 0, 1);
         UpdateHighlightClip();
     }
@@ -183,6 +196,101 @@ public partial class OverlayWindow : Window, IDisposable
         var visibleProgress = _karaokeMode ? _highlightProgress : 1d;
         _highlightClip.Rect = new Rect(_highlightTextStart, 0,
             _highlightTextWidth * visibleProgress, Math.Max(1, CurrentHighlightLine.ActualHeight));
+        _rubyHighlightClip.Rect = new Rect(0, 0,
+            Math.Max(0, CurrentRubyHighlightLine.ActualWidth * visibleProgress),
+            Math.Max(1, CurrentRubyHighlightLine.ActualHeight));
+    }
+
+    private void RefreshRubyLines()
+    {
+        BuildCurrentRuby(CurrentLine.Text);
+        BuildNextRuby(NextLine.Text);
+        UpdateHighlightClip();
+    }
+
+    private void BuildCurrentRuby(string text)
+    {
+        var segments = JapaneseRubyAnalyzer.Analyze(text);
+        CurrentRubyLine.Children.Clear();
+        CurrentRubyHighlightLine.Children.Clear();
+        CurrentRubyGrid.Visibility = segments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (segments.Count == 0) return;
+        BuildRubyPanel(CurrentRubyLine, segments, CurrentLine.FontSize,
+            CurrentLine.FontSize * 0.46, System.Windows.Media.Brushes.White, withShadow: true);
+        BuildRubyPanel(CurrentRubyHighlightLine, segments, CurrentLine.FontSize,
+            CurrentLine.FontSize * 0.46, CurrentHighlightLine.Foreground,
+            CurrentHighlightLine.ActualWidth, _highlightTextStart, withShadow: false);
+    }
+
+    private void BuildNextRuby(string text)
+    {
+        var segments = JapaneseRubyAnalyzer.Analyze(text);
+        NextRubyLine.Children.Clear();
+        NextRubyLine.Visibility = segments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (segments.Count == 0) return;
+        BuildRubyPanel(NextRubyLine, segments, NextLine.FontSize,
+            NextLine.FontSize * 0.48,
+            new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xBF, 0xFF, 0xFF, 0xFF)),
+            withShadow: true);
+    }
+
+    private void BuildRubyPanel(System.Windows.Controls.Panel panel,
+        IReadOnlyList<RubySegment> segments, double surfaceFontSize,
+        double rubyFontSize, System.Windows.Media.Brush foreground,
+        double gradientSurfaceWidth = 0, double gradientTextStart = 0,
+        bool withShadow = true)
+    {
+        var typeface = new Typeface(new System.Windows.Media.FontFamily(_fontFamily), FontStyles.Normal,
+            FontWeights.SemiBold, FontStretches.Normal);
+        var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var measured = segments.Select(segment => new
+        {
+            Segment = segment,
+            Width = Math.Max(1, new FormattedText(segment.DisplayText,
+                CultureInfo.GetCultureInfo("ja-JP"), System.Windows.FlowDirection.LeftToRight,
+                typeface, surfaceFontSize, foreground, pixelsPerDip).WidthIncludingTrailingWhitespace)
+        }).ToArray();
+        var offset = 0d;
+        foreach (var item in measured)
+        {
+            var itemForeground = AlignRubyBrush(foreground, offset,
+                gradientSurfaceWidth, gradientTextStart);
+            var ruby = new TextBlock
+            {
+                Width = item.Width,
+                Text = item.Segment.ReadingText,
+                Foreground = itemForeground,
+                FontFamily = new System.Windows.Media.FontFamily(_fontFamily),
+                FontSize = rubyFontSize,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+            if (withShadow)
+            {
+                ruby.Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 4,
+                    ShadowDepth = 1,
+                    Opacity = 0.95
+                };
+            }
+            panel.Children.Add(ruby);
+            offset += item.Width;
+        }
+    }
+
+    private static System.Windows.Media.Brush AlignRubyBrush(System.Windows.Media.Brush foreground,
+        double itemOffset, double surfaceWidth, double textStart)
+    {
+        if (foreground is not LinearGradientBrush gradient || surfaceWidth <= 0)
+            return foreground;
+        var aligned = gradient.CloneCurrentValue();
+        aligned.MappingMode = BrushMappingMode.Absolute;
+        aligned.StartPoint = new System.Windows.Point(-textStart - itemOffset, 0);
+        aligned.EndPoint = new System.Windows.Point(surfaceWidth - textStart - itemOffset, 0);
+        return aligned;
     }
 
     private void ShowToast(string message)
@@ -449,6 +557,7 @@ public partial class OverlayWindow : Window, IDisposable
     {
         _autoColor = automatic;
         CurrentHighlightLine.Foreground = brush;
+        BuildCurrentRuby(CurrentLine.Text);
         // The palette button always represents the user's persistent manual/fallback
         // choice. Automatic artist colors only change the active lyric brush.
         ColorButton.Foreground = new SolidColorBrush(_highlightColor);
@@ -554,6 +663,7 @@ public partial class OverlayWindow : Window, IDisposable
         CurrentHighlightLine.FontFamily = family;
         NextLine.FontFamily = family;
         UpdateHighlightMetrics();
+        RefreshRubyLines();
         UpdateHighlightClip();
     }
 

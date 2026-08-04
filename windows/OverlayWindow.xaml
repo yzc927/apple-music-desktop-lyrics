@@ -19,7 +19,14 @@
             <Border x:Name="HoverBackdrop" CornerRadius="14" Background="Transparent"
                     VerticalAlignment="Center" Height="72" IsHitTestVisible="False" />
 
-            <StackPanel Margin="24,38,24,14" VerticalAlignment="Center">
+            <StackPanel Margin="24,24,24,10" VerticalAlignment="Center">
+                <Grid x:Name="CurrentRubyGrid" Height="18" Margin="0,0,0,-1"
+                      Visibility="Collapsed" IsHitTestVisible="False">
+                    <StackPanel x:Name="CurrentRubyLine" Orientation="Horizontal"
+                                HorizontalAlignment="Center" />
+                    <StackPanel x:Name="CurrentRubyHighlightLine" Orientation="Horizontal"
+                                HorizontalAlignment="Center" />
+                </Grid>
                 <Grid>
                     <TextBlock x:Name="CurrentLine" Text="正在等待 Apple Music…"
                            Foreground="White" FontFamily="Microsoft YaHei UI"
@@ -34,7 +41,10 @@
                            FontSize="30" FontWeight="SemiBold" TextAlignment="Center"
                            TextTrimming="CharacterEllipsis" IsHitTestVisible="False" />
                 </Grid>
-                <TextBlock x:Name="NextLine" Margin="0,8,0,0" Text=""
+                <StackPanel x:Name="NextRubyLine" Height="12" Margin="0,5,0,-2"
+                            Orientation="Horizontal" HorizontalAlignment="Center"
+                            Visibility="Collapsed" IsHitTestVisible="False" />
+                <TextBlock x:Name="NextLine" Margin="0,5,0,0" Text=""
                        Foreground="#BFFFFFFF" FontFamily="Microsoft YaHei UI"
                        FontSize="19" TextAlignment="Center" TextTrimming="CharacterEllipsis">
                     <TextBlock.Effect>
