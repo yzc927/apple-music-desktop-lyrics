@@ -32,7 +32,8 @@ internal sealed class AppleMusicUiLyricsProvider
         return null;
     }
 
-    public AppleLyricsSnapshot? TryRead(string? title = null)
+    public AppleLyricsSnapshot? TryRead(
+        string? title = null, bool allowBoundaryEstimate = true)
     {
         try
         {
@@ -48,7 +49,7 @@ internal sealed class AppleMusicUiLyricsProvider
             var currentElement = root.FindFirst(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.AutomationIdProperty, CurrentLineId));
             if (currentElement is null)
-                return TryReadVisibleLines(root);
+                return TryReadVisibleLines(root, allowBoundaryEstimate);
 
             var current = currentElement.Current.Name?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(current)) return null;
@@ -84,7 +85,8 @@ internal sealed class AppleMusicUiLyricsProvider
         return new AppleLyricsSnapshot("•••", "", true);
     }
 
-    private static AppleLyricsSnapshot? TryReadVisibleLines(AutomationElement root)
+    private static AppleLyricsSnapshot? TryReadVisibleLines(
+        AutomationElement root, bool allowBoundaryEstimate)
     {
         // Recent Apple Music builds no longer expose a dedicated CurrentLine id.
         // Their lyric scroller keeps the highlighted row at a stable vertical
@@ -103,6 +105,8 @@ internal sealed class AppleMusicUiLyricsProvider
             new PropertyCondition(AutomationElement.AutomationIdProperty, LineId));
         AutomationElement? currentElement = null;
         var currentIndex = -1;
+        var firstVisibleIndex = -1;
+        var lastVisibleIndex = -1;
         var nearestDistance = double.MaxValue;
         for (var index = 0; index < lines.Count; index++)
         {
@@ -113,6 +117,9 @@ internal sealed class AppleMusicUiLyricsProvider
                 bounds.Bottom <= viewport.Top || bounds.Top >= viewport.Bottom)
                 continue;
 
+            if (firstVisibleIndex < 0) firstVisibleIndex = index;
+            lastVisibleIndex = index;
+
             var distance = Math.Abs(bounds.Top - highlightAnchor);
             if (distance >= nearestDistance) continue;
             nearestDistance = distance;
@@ -121,6 +128,15 @@ internal sealed class AppleMusicUiLyricsProvider
         }
 
         if (currentElement is null) return null;
+        if (!allowBoundaryEstimate &&
+            (firstVisibleIndex == 0 || lastVisibleIndex == lines.Count - 1))
+        {
+            // Near the beginning and end Apple clamps the scroller instead of
+            // keeping the highlighted row at the usual anchor. UI Automation no
+            // longer exposes which of the visible rows is highlighted, so using
+            // the anchor here would manufacture a large, incorrect calibration.
+            return null;
+        }
         var current = currentElement.Current.Name?.Trim() ?? "";
         var next = currentIndex + 1 < lines.Count
             ? lines[currentIndex + 1].Current.Name?.Trim() ?? ""

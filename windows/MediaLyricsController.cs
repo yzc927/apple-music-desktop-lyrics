@@ -341,7 +341,8 @@ internal sealed class MediaLyricsController : IDisposable
         _applePolling = true;
         try
         {
-            var snapshot = await Task.Run(() => _appleLyrics.TryRead());
+            var snapshot = await Task.Run(() =>
+                _appleLyrics.TryRead(allowBoundaryEstimate: _usingAppleLyrics));
             if (snapshot is not null)
             {
                 _appleReadFailures = 0;
@@ -427,11 +428,15 @@ internal sealed class MediaLyricsController : IDisposable
         if (_pendingCalibrationCount < 2 ||
             string.Equals(_calibrationAppleCurrent, snapshot.Current, StringComparison.Ordinal)) return;
 
-        var rawPosition = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        var calibrationTicks = Stopwatch.GetTimestamp();
+        var rawPosition = AdvancePlaybackClock(calibrationTicks);
         var expected = rawPosition + _lyricsOffset + _automaticOffset;
         var lineIndex = LyricTiming.FindCalibrationLine(
             _lines, snapshot.Current, _pendingCalibrationNext, expected);
-        if (lineIndex < 0 || lineIndex <= _lastCalibrationLineIndex) return;
+        if (lineIndex < 0) return;
+        if (TryRecoverBackwardSeek(
+                snapshot, lineIndex, expected, calibrationTicks)) return;
+        if (lineIndex <= _lastCalibrationLineIndex) return;
         // Automatic calibration corrects the source timeline only. The user's
         // remembered manual offset is intentionally applied afterwards and must
         // never be cancelled by background calibration.
@@ -462,6 +467,38 @@ internal sealed class MediaLyricsController : IDisposable
         _hasAutoCalibration = true;
         _calibrationAppleCurrent = snapshot.Current;
         _lastCalibrationLineIndex = lineIndex;
+    }
+
+    private bool TryRecoverBackwardSeek(
+        AppleLyricsSnapshot snapshot, int lineIndex, TimeSpan expected, long nowTicks)
+    {
+        if (_lastRenderedIndex < 0 || lineIndex >= _lastRenderedIndex ||
+            (expected - _lines[lineIndex].Time).TotalSeconds < 4 ||
+            string.IsNullOrWhiteSpace(snapshot.Next) || lineIndex + 1 >= _lines.Count ||
+            LyricTiming.Similarity(_lines[lineIndex].Text, snapshot.Current) < 0.9 ||
+            LyricTiming.Similarity(_lines[lineIndex + 1].Text, snapshot.Next) < 0.72)
+            return false;
+
+        // Apple Music occasionally leaves GSMTC's timeline untouched after a
+        // backward seek. The normal monotonic guards then keep rendering a later
+        // occurrence of the same lyric forever. A stable current+next pair is
+        // strong enough to reset our local playback clock without guessing from a
+        // repeated current row alone.
+        _clockPosition = _lines[lineIndex].Time - _lyricsOffset;
+        _clockUpdatedTicks = nowTicks;
+        _clockCorrection = TimeSpan.Zero;
+        _automaticOffset = TimeSpan.Zero;
+        _calibrationSamples.Clear();
+        _calibrationAppleCurrent = snapshot.Current;
+        _hasAutoCalibration = true;
+        _lastCalibrationLineIndex = lineIndex;
+        _lastRenderedIndex = lineIndex - 1;
+        _lastProgressIndex = -1;
+        _lastProgress = 0;
+        _lastLineAdvancedTicks = nowTicks;
+        _uiPlaybackEvidenceUntilTicks = nowTicks + (long)(Stopwatch.Frequency * 5d);
+        _notify("检测到回退播放，歌词已重新同步");
+        return true;
     }
 
     private TimeSpan EffectivePosition() =>
