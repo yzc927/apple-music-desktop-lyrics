@@ -164,14 +164,14 @@ internal sealed class AppleMusicUiLyricsProvider
 
     private static bool MatchesCurrentTrack(AutomationElement root, string title)
     {
-        var titleElements = root.FindAll(TreeScope.Descendants,
+        // The playback title is near the top of Apple Music's automation tree.
+        // FindAll forces WinUI to materialise every matching element in large
+        // search/library pages and can peg Apple Music's UI thread. The first
+        // playback-title element is sufficient for the stale-panel guard.
+        var titleElement = root.FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.AutomationIdProperty, TrackTitleId));
-        for (var index = 0; index < titleElements.Count; index++)
-        {
-            var candidate = titleElements[index].Current.Name?.Trim();
-            if (string.Equals(candidate, title.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
+        var candidate = titleElement?.Current.Name?.Trim();
+        return string.Equals(candidate, title.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static AutomationElement? GetRoot()

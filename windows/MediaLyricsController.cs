@@ -46,11 +46,13 @@ internal sealed class MediaLyricsController : IDisposable
     private string _appleNext = "";
     private bool _appleInstrumental;
     private TimeSpan _appleLineStartedAt;
+    private readonly Queue<double> _applePaceSamples = new();
     private string _calibrationAppleCurrent = "";
     private bool _hasAutoCalibration;
     private string _pendingCalibrationCurrent = "";
     private string _pendingCalibrationNext = "";
     private int _pendingCalibrationCount;
+    private long _pendingCalibrationObservedTicks;
     private int _lastCalibrationLineIndex = -1;
     private int _lastProgressIndex = -1;
     private double _lastProgress;
@@ -389,11 +391,28 @@ internal sealed class MediaLyricsController : IDisposable
     {
         if (!string.Equals(_appleCurrent, snapshot.Current, StringComparison.Ordinal))
         {
+            var nextLineStartedAt = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+            LearnAppleLyricsPace(nextLineStartedAt);
             _appleCurrent = snapshot.Current;
-            _appleLineStartedAt = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+            _appleLineStartedAt = nextLineStartedAt;
         }
         _appleNext = snapshot.Next;
         _appleInstrumental = snapshot.IsInstrumental;
+    }
+
+    private void LearnAppleLyricsPace(TimeSpan nextLineStartedAt)
+    {
+        if (string.IsNullOrWhiteSpace(_appleCurrent) || _appleInstrumental ||
+            _appleLineStartedAt <= TimeSpan.Zero) return;
+
+        var interval = (nextLineStartedAt - _appleLineStartedAt).TotalSeconds;
+        var units = LyricTiming.VocalUnits(_appleCurrent);
+        if (interval is < 0.55 or > 8 || units < 1) return;
+
+        _applePaceSamples.Enqueue(Math.Clamp(interval / units, 0.07, 0.75));
+        while (_applePaceSamples.Count > 7) _applePaceSamples.Dequeue();
+        var ordered = _applePaceSamples.Order().ToArray();
+        _secondsPerVocalUnit = ordered[ordered.Length / 2];
     }
 
     private void RenderAppleLyrics()
@@ -407,7 +426,12 @@ internal sealed class MediaLyricsController : IDisposable
 
         var position = AdvancePlaybackClock(Stopwatch.GetTimestamp()) + _lyricsOffset;
         var elapsed = Math.Max(0, (position - _appleLineStartedAt).TotalSeconds);
-        var estimatedSeconds = Math.Clamp(_appleCurrent.Length * 0.28, 1.4, 6.0);
+        // Apple UI Automation exposes line changes but no per-word timestamps.
+        // Count Latin words and CJK characters as vocal units, then use the
+        // rolling pace learned from this song's observed line intervals. This
+        // avoids treating every letter in an English word as a separate beat.
+        var units = LyricTiming.VocalUnits(_appleCurrent);
+        var estimatedSeconds = Math.Clamp(units * _secondsPerVocalUnit, 0.8, 8.0);
         var progress = Math.Clamp(elapsed / estimatedSeconds, 0, 1);
         _render(_appleCurrent, _appleNext, progress, _artist);
     }
@@ -421,6 +445,7 @@ internal sealed class MediaLyricsController : IDisposable
             _pendingCalibrationCurrent = snapshot.Current;
             _pendingCalibrationNext = snapshot.Next;
             _pendingCalibrationCount = 1;
+            _pendingCalibrationObservedTicks = Stopwatch.GetTimestamp();
             return;
         }
         _pendingCalibrationNext = snapshot.Next;
@@ -430,6 +455,14 @@ internal sealed class MediaLyricsController : IDisposable
 
         var calibrationTicks = Stopwatch.GetTimestamp();
         var rawPosition = AdvancePlaybackClock(calibrationTicks);
+        // The second identical UI snapshot confirms that the row is stable, but
+        // it is not the moment the row changed. Calibrating at confirmation time
+        // adds one or more 250 ms polling intervals as artificial lyric delay.
+        // Project the clock back to the first observation while keeping the live
+        // monotonic clock itself at the current render time.
+        if (_clockPlaying && _pendingCalibrationObservedTicks > 0)
+            rawPosition -= Stopwatch.GetElapsedTime(
+                _pendingCalibrationObservedTicks, calibrationTicks);
         var expected = rawPosition + _lyricsOffset + _automaticOffset;
         var lineIndex = LyricTiming.FindCalibrationLine(
             _lines, snapshot.Current, _pendingCalibrationNext, expected);
@@ -526,11 +559,13 @@ internal sealed class MediaLyricsController : IDisposable
         _pendingCalibrationCurrent = "";
         _pendingCalibrationNext = "";
         _pendingCalibrationCount = 0;
+        _pendingCalibrationObservedTicks = 0;
         _lastCalibrationLineIndex = -1;
         _lastRenderedIndex = -1;
         _lastProgressIndex = -1;
         _lastProgress = 0;
         _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
+        _applePaceSamples.Clear();
         _secondsPerVocalUnit = 0.28;
     }
 
@@ -565,6 +600,7 @@ internal sealed class MediaLyricsController : IDisposable
             _pendingCalibrationCurrent = "";
             _pendingCalibrationNext = "";
             _pendingCalibrationCount = 0;
+            _pendingCalibrationObservedTicks = 0;
             _lastCalibrationLineIndex = -1;
             _lastRenderedIndex = -1;
             _lastProgressIndex = -1;
@@ -572,10 +608,17 @@ internal sealed class MediaLyricsController : IDisposable
             return;
         }
 
-        // Merge small timing errors into a bounded correction budget. Render ticks
-        // consume it gradually, so the lyric clock never freezes or visibly jumps.
+        // Apple Music can repeatedly publish a slightly stale position while it is
+        // playing. Accumulating those negative samples slows the monotonic clock
+        // and makes lyrics fall behind. Large backward seeks were handled above,
+        // so only positive drift should adjust an actively playing clock.
+        var usableErrorSeconds = playing
+            ? Math.Max(0, error.TotalSeconds)
+            : error.TotalSeconds;
         var mergedSeconds = Math.Clamp(
-            _clockCorrection.TotalSeconds + error.TotalSeconds * 0.45, -1.2, 1.2);
+            _clockCorrection.TotalSeconds + usableErrorSeconds * 0.45,
+            playing ? 0 : -1.2,
+            1.2);
         _clockCorrection = TimeSpan.FromSeconds(mergedSeconds);
     }
 

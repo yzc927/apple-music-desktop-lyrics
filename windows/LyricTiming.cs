@@ -50,12 +50,30 @@ internal static class LyricTiming
         var completionLead = Math.Clamp(natural * 0.12, 0.09, 0.4);
         completionLead += fastness * 0.06;
         var sweepDuration = Math.Max(0.1, natural - completionLead);
+
+        // A line timestamp marks when the row starts, not when its last word
+        // finishes. Estimate a conservative vocal duration so a pause before the
+        // next row does not make the highlight visibly trail the singer. Keeping
+        // at least 70% of the source interval protects deliberately slow lines.
+        var estimatedVocalDuration = units * secondsPerUnit;
+        var minimumSweepDuration = Math.Min(natural * 0.7, sweepDuration);
+        var paceDuration = Math.Clamp(
+            estimatedVocalDuration, minimumSweepDuration, sweepDuration);
+        var trailingSlack = sweepDuration - paceDuration;
+        if (trailingSlack > 0.15)
+        {
+            var confidence = Math.Clamp((trailingSlack - 0.15) / 0.85, 0, 1);
+            sweepDuration -= trailingSlack * (0.45 + confidence * 0.55);
+        }
+
         if (fastness > 0)
         {
-            var estimatedVocalDuration = units * secondsPerUnit;
             var densityDuration = natural * (1 - fastness * 0.25);
+            var minimumAdaptiveDuration = Math.Min(natural * 0.7, sweepDuration);
             var adaptiveDuration = Math.Clamp(
-                Math.Min(estimatedVocalDuration, densityDuration), natural * 0.7, sweepDuration);
+                Math.Min(estimatedVocalDuration, densityDuration),
+                minimumAdaptiveDuration,
+                sweepDuration);
             sweepDuration += (adaptiveDuration - sweepDuration) * fastness;
             elapsed += fastness * 0.06;
         }
@@ -137,7 +155,7 @@ internal static class LyricTiming
         return bestIndex;
     }
 
-    private static double VocalUnits(string text)
+    public static double VocalUnits(string text)
     {
         var units = 0d;
         var inLatinWord = false;
