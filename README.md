@@ -14,7 +14,7 @@ Apple Music 桌面歌词伴侣。当前提供 Windows 可运行版本和 macOS �
 ## Windows 功能
 
 - 透明桌面歌词、置顶、锁定、局部鼠标穿透、缩放与托盘管理
-- 默认跟随 Apple Music：Apple Music 打开时自动显示歌词，退出时自动隐藏；后台托盘守护随 Windows 登录启动
+- 默认跟随 Apple Music：Apple Music 打开时自动显示歌词，退出时自动隐藏；Windows 登录启动由管理器单独控制，新安装默认关闭
 - 优先使用 LRCLIB；找不到时才回退到官方歌词，Apple 自动对时作为默认关闭的实验选项
 - 默认普通整句着色，也可切换卡拉 OK 稳定扫色；同一句进度只前进不回退，并在换句前自然完成
 - 日语歌词中同时出现汉字和假名时，自动在汉字上方标注平假名读音；中文和其他语言保持原样
@@ -44,11 +44,11 @@ dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -r win-x64 `
 ## 数据与隐私
 
 应用通过系统媒体会话读取当前曲目的歌名、歌手、专辑、时长、播放状态和进度。LRCLIB 找不到歌词时，
-Windows UI Automation 会读取 Apple Music 已显示的歌词行作为后备；LRCLIB 可用且歌词面板已经打开时，
+Windows UI Automation 会按“当前伴奏标记、`CurrentLine` 当前行、虚拟化 `Line` 列表”三个独立策略读取 Apple Music 已显示的歌词行作为后备；LRCLIB 可用且歌词面板已经打开时，
 用户主动开启实验自动对时后，也会以只读方式将官方当前行作为校准信号，但不会替换 LRCLIB。它兼容提供 `CurrentLine` 的版本，
 也兼容仅提供虚拟化 `Line` 列表的新版本。此过程不读取 Apple ID、密码、Cookie 或令牌。为匹配首选同步歌词，
 曲目信息会发送给 LRCLIB；无结果时才会自动打开 Apple Music 歌词面板。窗口、字体、逐歌曲时间偏移和
-歌词版本选择只保存在本机。
+歌词版本选择只保存在本机。Apple 后备连续读取失败时会明确显示不可用原因，并保留导入本地 LRC 和手动重新获取入口，不会冻结在旧歌词上。
 
 ## 状态
 

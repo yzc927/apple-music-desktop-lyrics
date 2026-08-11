@@ -80,6 +80,20 @@
                         </Grid>
 
                         <Border Margin="0,12,0,0" Padding="18" CornerRadius="12" Background="White">
+                            <StackPanel>
+                                <TextBlock Text="启动行为" FontWeight="SemiBold" FontSize="15" />
+                                <CheckBox x:Name="StartupCheckBox" Margin="0,12,0,0"
+                                          Content="随 Windows 登录启动桌面歌词"
+                                          Checked="StartupCheckBox_Changed"
+                                          Unchecked="StartupCheckBox_Changed" />
+                                <TextBlock x:Name="StartupStatusText" Margin="0,7,0,0"
+                                           TextWrapping="Wrap" Foreground="#FF6F7684" />
+                                <TextBlock Text="新安装默认关闭；旧版本已经开启的电脑会自动保留。此设置与“跟随 Apple Music 自动显示 / 隐藏”互不影响。"
+                                           Margin="0,5,0,0" TextWrapping="Wrap" Foreground="#FF6F7684" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Margin="0,12,0,0" Padding="18" CornerRadius="12" Background="White">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -142,7 +156,10 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <StackPanel>
                             <TextBlock Text="歌手配色管理" FontSize="17" FontWeight="SemiBold"
@@ -151,37 +168,53 @@
                                        Margin="0,5,0,0" Foreground="#FF6F7684" />
                         </StackPanel>
                         <Grid Grid.Row="1" Margin="0,14,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="220" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Text="歌手 / 组合名称" Foreground="#FF6F7684" />
-                            <TextBlock Grid.Column="1" Margin="8,0,0,0" Text="颜色列表（例如 #F25F7C, #55B8FF）"
-                                       Foreground="#FF6F7684" />
                             <TextBox x:Name="ArtistNameEditor" Grid.Row="1" Margin="0,5,0,0"
                                      Height="34" Padding="8,4"
                                      ToolTip="歌手或组合名称" />
-                            <TextBox x:Name="ArtistColorsEditor" Grid.Row="1" Grid.Column="1" Margin="8,5,0,0"
-                                     Height="34" Padding="8,4"
-                                     ToolTip="从左到右输入颜色，例如 #F25F7C, #55B8FF" />
                         </Grid>
-                        <WrapPanel Grid.Row="2" Margin="0,10,0,0">
+
+                        <StackPanel Grid.Row="2" Margin="0,14,0,0">
+                            <TextBlock Text="当前配色" FontWeight="SemiBold" Foreground="#FF4A5261" />
+                            <TextBlock Text="点击色块打开调色板；右键删除。多个颜色按顺序生成渐变，最多 5 个。"
+                                       Margin="0,4,0,8" Foreground="#FF6F7684" />
+                            <WrapPanel x:Name="ArtistColorChips" />
+                            <Button Content="＋ 添加自定义颜色" Margin="0,8,0,0"
+                                    HorizontalAlignment="Left" Click="AddArtistColor_Click" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="3" Margin="0,14,0,0">
+                            <TextBlock Text="常用颜色" FontWeight="SemiBold" Foreground="#FF4A5261" />
+                            <TextBlock Text="单色时点击会直接替换；已有渐变时点击会追加。"
+                                       Margin="0,4,0,8" Foreground="#FF6F7684" />
+                            <WrapPanel x:Name="CommonArtistColors" />
+                        </StackPanel>
+
+                        <WrapPanel Grid.Row="4" Margin="0,12,0,0">
                             <Button Content="使用当前歌手" Margin="0,0,8,8" Click="UseCurrentArtist_Click" />
                             <Button Content="新增 / 保存" Margin="0,0,8,8" Click="SaveArtistPalette_Click" />
                             <Button Content="删除自定义" Margin="0,0,8,8" Click="DeleteArtistPalette_Click" />
                             <Button Content="导入配色库" Margin="0,0,8,8" Click="ImportArtistPalette_Click" />
                             <Button Content="导出配色库" Margin="0,0,8,8" Click="ExportArtistPalette_Click" />
                         </WrapPanel>
-                        <TextBlock Grid.Row="3" Text="点击下方歌手可载入编辑；内置配色不会被删除。"
+                        <TextBlock Grid.Row="5" Text="点击下方歌手可载入编辑；内置配色不会被删除。"
                                    Margin="0,0,0,9" Foreground="#FF6F7684" />
-                        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto"
+                        <ScrollViewer Grid.Row="6" VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="ArtistList" />
                         </ScrollViewer>
+                        <Expander Grid.Row="7" Header="高级：手动编辑颜色代码" Margin="0,12,0,0">
+                            <StackPanel Margin="0,8,0,0">
+                                <TextBlock Text="从左到右输入颜色代码，例如 #F25F7C, #55B8FF。"
+                                           Foreground="#FF6F7684" />
+                                <TextBox x:Name="ArtistColorsEditor" Margin="0,6,0,0" Height="34" Padding="8,4"
+                                         TextChanged="ArtistColorsEditor_TextChanged" />
+                            </StackPanel>
+                        </Expander>
                     </Grid>
                 </Border>
             </TabItem>

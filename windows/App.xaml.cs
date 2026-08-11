@@ -93,12 +93,6 @@ public partial class App : System.Windows.Application
         if (_followService.Enabled)
         {
             ApplyAppleMusicRunningState(_followService.IsAppleMusicRunning());
-            if (_followService.StartupRegistrationError is { Length: > 0 } error)
-            {
-                System.Windows.MessageBox.Show(
-                    "跟随功能已开启，但无法加入 Windows 登录启动项：\n" + error,
-                    "Apple Music 桌面歌词");
-            }
         }
         else
         {
@@ -125,7 +119,7 @@ public partial class App : System.Windows.Application
         if (_window is null) return;
         if (_management is null)
         {
-            _management = new ManagementWindow(_window);
+            _management = new ManagementWindow(_window, _followService!);
             _management.Closed += (_, _) => _management = null;
         }
         if (!_management.IsVisible) _management.Show();

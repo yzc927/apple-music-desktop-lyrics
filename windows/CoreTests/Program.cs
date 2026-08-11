@@ -15,6 +15,9 @@ static void Near(double expected, double actual, string name)
 var ordinary = LrcParser.Parse("[00:01.50]你好\n[00:03.00]世界");
 Equal(2, ordinary.Count, "ordinary line count");
 Equal(false, ordinary[0].HasWordTiming, "ordinary fallback");
+Equal(-1, LyricTiming.ActiveLineIndex(ordinary, TimeSpan.Zero), "before first lyric has no active line");
+Equal(0, LyricTiming.ActiveLineIndex(ordinary, TimeSpan.FromSeconds(1.5)), "first lyric activates on timestamp");
+Equal(1, LyricTiming.ActiveLineIndex(ordinary, TimeSpan.FromSeconds(4)), "last lyric remains active");
 
 var enhancedText = "[00:12.00]<00:12.00>君<00:12.30>の<00:12.55>名<00:12.90>は<00:13.20>";
 var enhanced = LrcParser.Parse(enhancedText);
@@ -37,5 +40,9 @@ editable.Shift(TimeSpan.FromMilliseconds(500));
 Equal(TimeSpan.FromSeconds(12.5), editable.Time, "line shift");
 Equal(TimeSpan.FromSeconds(12.5), editable.Segments[0].Time, "segment shift");
 Equal(TimeSpan.FromSeconds(13.7), editable.ExplicitEndTime, "end shift");
+
+Equal(false, StartupSettingsMigration.Resolve(null, false), "new install startup default");
+Equal(true, StartupSettingsMigration.Resolve(null, true), "legacy startup is preserved");
+Equal(false, StartupSettingsMigration.Resolve(false, true), "explicit startup setting wins");
 
 Console.WriteLine("Windows core tests passed.");

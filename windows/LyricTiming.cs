@@ -5,6 +5,18 @@ namespace AppleMusicDesktopLyrics;
 
 internal static class LyricTiming
 {
+    public static int ActiveLineIndex(IReadOnlyList<LyricLine> lines, TimeSpan position)
+    {
+        var activeIndex = -1;
+        for (var index = 0; index < lines.Count; index++)
+        {
+            if (lines[index].Time > position) break;
+            activeIndex = index;
+        }
+
+        return activeIndex;
+    }
+
     public static double EstimateSecondsPerUnit(IReadOnlyList<LyricLine> lines)
     {
         var samples = new List<double>();

@@ -5,19 +5,32 @@ using System.IO;
 using System.Text.RegularExpressions;
 using MessageBox = System.Windows.MessageBox;
 using WpfButton = System.Windows.Controls.Button;
+using Forms = System.Windows.Forms;
 
 namespace AppleMusicDesktopLyrics;
 
 public partial class ManagementWindow : Window
 {
     private readonly OverlayWindow _overlay;
+    private readonly AppleMusicFollowService _followService;
     private readonly System.Windows.Threading.DispatcherTimer _refreshTimer;
     private bool _selectingFont;
+    private bool _refreshingStartup = true;
+    private bool _syncingArtistColors;
+    private readonly List<string> _artistColors = [];
+    private static readonly (string Name, string Hex)[] CommonColors =
+    [
+        ("珊瑚红", "#FF453A"), ("暖橙", "#FF9F0A"), ("明黄", "#FFD60A"),
+        ("薄荷绿", "#30D158"), ("湖蓝", "#64D2FF"), ("晴空蓝", "#0A84FF"),
+        ("薰衣草", "#BF5AF2"), ("樱花粉", "#FF375F"), ("青绿色", "#39A2A5"),
+        ("石板蓝", "#5B87A5")
+    ];
 
-    public ManagementWindow(OverlayWindow overlay)
+    internal ManagementWindow(OverlayWindow overlay, AppleMusicFollowService followService)
     {
         InitializeComponent();
         _overlay = overlay;
+        _followService = followService;
         FontComboBox.ItemsSource = _overlay.AvailableFonts;
         FontComboBox.DisplayMemberPath = nameof(FontChoice.DisplayName);
         FontComboBox.SelectedValuePath = nameof(FontChoice.FamilyName);
@@ -30,7 +43,11 @@ public partial class ManagementWindow : Window
         Loaded += (_, _) => _refreshTimer.Start();
         Closed += (_, _) => _refreshTimer.Stop();
         Activated += (_, _) => RefreshState();
+        BuildCommonArtistColors();
         BuildArtistList();
+        var initial = ArtistColorEngine.Resolve(
+            _overlay.CurrentArtist, _overlay.FallbackHighlightColor);
+        SetArtistColors(initial.Colors);
         RefreshState();
     }
 
@@ -53,6 +70,12 @@ public partial class ManagementWindow : Window
         KaraokeModeDescription.Text = _overlay.IsKaraokeMode
             ? "当前按播放进度从左向右扫色。"
             : "当前整句从一开始就完整显示颜色。";
+        _refreshingStartup = true;
+        StartupCheckBox.IsChecked = _followService.StartupEnabled;
+        _refreshingStartup = false;
+        StartupStatusText.Text = _followService.StartupEnabled
+            ? "已开启；下次登录 Windows 时会在托盘后台启动。"
+            : "已关闭；需要手动运行程序。";
         OffsetText.Text = FormatOffset(_overlay.CurrentOffsetSeconds);
         LocalLyricsStatusText.Text = _overlay.HasLocalLyricsOverride
             ? "当前歌曲正在使用本地永久覆盖。"
@@ -96,7 +119,7 @@ public partial class ManagementWindow : Window
             rowButton.Click += (_, _) =>
             {
                 ArtistNameEditor.Text = palette.Identity;
-                ArtistColorsEditor.Text = string.Join(", ", palette.Colors.Select(ToRgbHex));
+                SetArtistColors(palette.Colors);
             };
             ArtistList.Children.Add(rowButton);
         }
@@ -104,6 +127,185 @@ public partial class ManagementWindow : Window
 
     private static string ToRgbHex(string value) => value.Length == 9 && value.StartsWith('#')
         ? "#" + value[3..] : value;
+
+    private void BuildCommonArtistColors()
+    {
+        CommonArtistColors.Children.Clear();
+        foreach (var (name, hex) in CommonColors)
+        {
+            var color = ParseColor(hex);
+            var button = new WpfButton
+            {
+                Content = name,
+                Width = 92,
+                Height = 34,
+                Padding = new Thickness(6, 3, 6, 3),
+                Margin = new Thickness(0, 0, 8, 8),
+                Background = new SolidColorBrush(color),
+                Foreground = ContrastingForeground(color),
+                BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(218, 222, 230)),
+                ToolTip = $"{name} {hex}"
+            };
+            button.Click += (_, _) => ApplyCommonArtistColor(hex);
+            CommonArtistColors.Children.Add(button);
+        }
+    }
+
+    private void SetArtistColors(IEnumerable<string> colors)
+    {
+        _artistColors.Clear();
+        foreach (var color in colors.Select(ToRgbHex))
+        {
+            if (!TryNormalizeArtistColor(color, out var normalized) ||
+                _artistColors.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                continue;
+            _artistColors.Add(normalized);
+            if (_artistColors.Count == 5) break;
+        }
+        SyncArtistColorEditor();
+    }
+
+    private void SyncArtistColorEditor()
+    {
+        _syncingArtistColors = true;
+        ArtistColorsEditor.Text = string.Join(", ", _artistColors);
+        _syncingArtistColors = false;
+        BuildArtistColorChips();
+    }
+
+    private void BuildArtistColorChips()
+    {
+        ArtistColorChips.Children.Clear();
+        for (var index = 0; index < _artistColors.Count; index++)
+        {
+            var capturedIndex = index;
+            var color = ParseColor(_artistColors[index]);
+            var button = new WpfButton
+            {
+                Content = $"颜色 {index + 1}",
+                MinWidth = 92,
+                Height = 38,
+                Margin = new Thickness(0, 0, 8, 8),
+                Background = new SolidColorBrush(color),
+                Foreground = ContrastingForeground(color),
+                BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(218, 222, 230)),
+                ToolTip = $"{_artistColors[index]} · 点击修改，右键删除"
+            };
+            button.Click += (_, _) => EditArtistColor(capturedIndex);
+            button.PreviewMouseRightButtonUp += (_, args) =>
+            {
+                args.Handled = true;
+                if (_artistColors.Count <= 1)
+                {
+                    MessageBox.Show(this, "至少保留一个颜色。", "无法删除");
+                    return;
+                }
+                _artistColors.RemoveAt(capturedIndex);
+                SyncArtistColorEditor();
+            };
+            ArtistColorChips.Children.Add(button);
+        }
+    }
+
+    private void ApplyCommonArtistColor(string hex)
+    {
+        if (_artistColors.Count <= 1)
+        {
+            SetArtistColors([hex]);
+            return;
+        }
+        if (_artistColors.Count >= 5)
+        {
+            MessageBox.Show(this, "渐变最多使用 5 个颜色。", "颜色已满");
+            return;
+        }
+        if (!_artistColors.Contains(hex, StringComparer.OrdinalIgnoreCase))
+            _artistColors.Add(hex);
+        SyncArtistColorEditor();
+    }
+
+    private void AddArtistColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (_artistColors.Count >= 5)
+        {
+            MessageBox.Show(this, "渐变最多使用 5 个颜色。", "颜色已满");
+            return;
+        }
+        var initial = _artistColors.LastOrDefault() ?? "#FF6B6B";
+        if (ChooseArtistColor(initial) is not { } selected) return;
+        _artistColors.Add(selected);
+        SyncArtistColorEditor();
+    }
+
+    private void EditArtistColor(int index)
+    {
+        if (index < 0 || index >= _artistColors.Count) return;
+        if (ChooseArtistColor(_artistColors[index]) is not { } selected) return;
+        _artistColors[index] = selected;
+        SyncArtistColorEditor();
+    }
+
+    private string? ChooseArtistColor(string initial)
+    {
+        var color = ParseColor(initial);
+        using var dialog = new Forms.ColorDialog
+        {
+            FullOpen = true,
+            Color = System.Drawing.Color.FromArgb(color.R, color.G, color.B)
+        };
+        return dialog.ShowDialog() == Forms.DialogResult.OK
+            ? $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}"
+            : null;
+    }
+
+    private void ArtistColorsEditor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingArtistColors || ArtistColorsEditor is null) return;
+        var values = Regex.Split(ArtistColorsEditor.Text, @"[,，;；\s]+")
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        if (values.Length == 0)
+        {
+            _artistColors.Clear();
+            BuildArtistColorChips();
+            return;
+        }
+        var normalized = new List<string>();
+        foreach (var value in values)
+        {
+            if (!TryNormalizeArtistColor(value, out var color)) return;
+            if (!normalized.Contains(color, StringComparer.OrdinalIgnoreCase))
+                normalized.Add(color);
+        }
+        if (normalized.Count > 5) return;
+        _artistColors.Clear();
+        _artistColors.AddRange(normalized);
+        BuildArtistColorChips();
+    }
+
+    private static bool TryNormalizeArtistColor(string value, out string normalized)
+    {
+        var text = value.Trim().ToUpperInvariant();
+        if (Regex.IsMatch(text, "^#[0-9A-F]{6}$"))
+        {
+            normalized = text;
+            return true;
+        }
+        if (Regex.IsMatch(text, "^#FF[0-9A-F]{6}$"))
+        {
+            normalized = "#" + text[3..];
+            return true;
+        }
+        normalized = "";
+        return false;
+    }
+
+    private static System.Windows.Media.Color ParseColor(string value) =>
+        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value)!;
+
+    private static System.Windows.Media.Brush ContrastingForeground(
+        System.Windows.Media.Color color) =>
+        color.R * 0.299 + color.G * 0.587 + color.B * 0.114 > 165
+            ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.White;
 
     private static System.Windows.Media.Brush CreateBrush(IReadOnlyList<string> hexColors)
     {
@@ -126,6 +328,20 @@ public partial class ManagementWindow : Window
     private void NextLyrics_Click(object sender, RoutedEventArgs e) { _overlay.ChangeLyricsCandidate(1); RefreshState(); }
     private void AutoTimingButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleAutomaticLyricsCalibration(); RefreshState(); }
     private void KaraokeModeButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleKaraokeMode(); RefreshState(); }
+
+    private void StartupCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_refreshingStartup) return;
+        var enabled = StartupCheckBox.IsChecked == true;
+        if (!_followService.SetStartupEnabled(enabled))
+        {
+            MessageBox.Show(this,
+                "无法更新 Windows 开机启动项：\n" +
+                (_followService.StartupRegistrationError ?? "未知错误"),
+                "开机启动设置失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        RefreshState();
+    }
 
     private void ImportLyrics_Click(object sender, RoutedEventArgs e)
     {
@@ -194,7 +410,7 @@ public partial class ManagementWindow : Window
     {
         ArtistNameEditor.Text = _overlay.CurrentArtist;
         var palette = ArtistColorEngine.Resolve(_overlay.CurrentArtist, _overlay.FallbackHighlightColor);
-        ArtistColorsEditor.Text = string.Join(", ", palette.Colors.Select(ToRgbHex));
+        SetArtistColors(palette.Colors);
     }
 
     private void SaveArtistPalette_Click(object sender, RoutedEventArgs e)
@@ -204,6 +420,8 @@ public partial class ManagementWindow : Window
             var colors = Regex.Split(ArtistColorsEditor.Text, @"[,，;；\s]+")
                 .Where(value => !string.IsNullOrWhiteSpace(value));
             CustomArtistPaletteStore.Current.Set(ArtistNameEditor.Text, colors);
+            if (CustomArtistPaletteStore.Current.TryGet(ArtistNameEditor.Text, out var savedColors))
+                SetArtistColors(savedColors);
             _overlay.RefreshArtistColor();
             BuildArtistList();
             RefreshState();

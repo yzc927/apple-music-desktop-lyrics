@@ -6,7 +6,7 @@ namespace AppleMusicDesktopLyrics;
 
 internal sealed class MediaLyricsController : IDisposable
 {
-    private enum LyricsLoadKind { None, Lrclib, Cache, Local, Apple }
+    private enum LyricsLoadKind { None, Lrclib, Cache, Local, Apple, Unavailable }
 
     private readonly Action<string, string, double, string> _render;
     private readonly Action<string> _notify;
@@ -40,6 +40,7 @@ internal sealed class MediaLyricsController : IDisposable
     private int _lastRenderedIndex = -1;
     private CancellationTokenSource _lyricsCts = new();
     private bool _usingAppleLyrics;
+    private bool _appleFallbackUnavailable;
     private bool _applePolling;
     private int _appleReadFailures;
     private string _appleCurrent = "";
@@ -96,6 +97,7 @@ internal sealed class MediaLyricsController : IDisposable
             LyricsLoadKind.Lrclib => _hasAutoCalibration
                 ? "LRCLIB 同步歌词（Apple 自动对时）"
                 : "LRCLIB 同步歌词（优先）",
+            LyricsLoadKind.Unavailable => "歌词不可用（可导入本地 LRC）",
             _ => "正在获取歌词"
         };
     public bool HasLocalLyricsOverride => _localLyrics.HasOverride(_mediaKey);
@@ -169,6 +171,7 @@ internal sealed class MediaLyricsController : IDisposable
             _candidates = [];
             _candidateIndex = -1;
             _usingAppleLyrics = false;
+            _appleFallbackUnavailable = false;
             _lyricsLoadKind = LyricsLoadKind.None;
             _appleCurrent = "";
             _appleNext = "";
@@ -210,12 +213,15 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts.Cancel();
         _lyricsCts.Dispose();
         _lyricsCts = new CancellationTokenSource();
+        var failurePrefix = "歌词加载失败";
         try
         {
             var local = _localLyrics.GetOverride(_mediaKey);
             if (local is not null && TryApplyStoredLyrics(local, LyricsLoadKind.Local)) return;
 
+            failurePrefix = "LRCLIB 获取失败";
             var search = await _lyricsClient.SearchAsync(title, artist, album, duration, _lyricsCts.Token);
+            failurePrefix = "LRCLIB 歌词处理失败";
             _candidates = search.Candidates;
             if (_candidates.Count > 0)
             {
@@ -230,7 +236,7 @@ internal sealed class MediaLyricsController : IDisposable
             var cached = _localLyrics.GetCache(_mediaKey);
             if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
             if (await TryAppleLyricsFallbackAsync(title)) return;
-            _render(title, "未找到同步歌词", 0, _artist);
+            MarkLyricsUnavailable("LRCLIB 没有匹配歌词；" + _appleLyrics.LastFailureReason);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -243,7 +249,7 @@ internal sealed class MediaLyricsController : IDisposable
             }
             catch (OperationCanceledException) { return; }
             catch { /* Preserve the original LRCLIB error below. */ }
-            _render(title, $"歌词获取失败：{ex.Message}", 0, _artist);
+            MarkLyricsUnavailable($"{failurePrefix}：{ex.Message}；{_appleLyrics.LastFailureReason}");
         }
     }
 
@@ -252,6 +258,7 @@ internal sealed class MediaLyricsController : IDisposable
         var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
         if (appleSnapshot is null) return false;
         _usingAppleLyrics = true;
+        _appleFallbackUnavailable = false;
         _lyricsLoadKind = LyricsLoadKind.Apple;
         ApplyAppleSnapshot(appleSnapshot);
         return true;
@@ -301,11 +308,14 @@ internal sealed class MediaLyricsController : IDisposable
         }
         if (_lines.Count == 0 || _session is null) return;
         var position = EffectivePosition();
-        var index = -1;
-        for (var i = 0; i < _lines.Count; i++)
+        var index = LyricTiming.ActiveLineIndex(_lines, position);
+        if (index < 0)
         {
-            if (_lines[i].Time > position) break;
-            index = i;
+            _lastRenderedIndex = -1;
+            _lastProgressIndex = -1;
+            _lastProgress = 0;
+            _render(_title, LyricTiming.DisplayText(_lines[0].Text), 0, _artist);
+            return;
         }
 
         // Clock corrections and Apple calibration are deliberately gradual. Never
@@ -375,6 +385,7 @@ internal sealed class MediaLyricsController : IDisposable
     private async Task PollAppleLyricsAsync()
     {
         if (_applePolling || string.IsNullOrWhiteSpace(_title)) return;
+        if (_appleFallbackUnavailable && !_usingAppleLyrics && _lines.Count == 0) return;
         var nowTicks = Stopwatch.GetTimestamp();
         var stalled = !_usingAppleLyrics && _lines.Count > 0 &&
             Stopwatch.GetElapsedTime(_lastLineAdvancedTicks, nowTicks) >= TimeSpan.FromSeconds(6);
@@ -404,6 +415,8 @@ internal sealed class MediaLyricsController : IDisposable
             _appleReadFailures++;
             if (_usingAppleLyrics && _appleReadFailures == 4)
                 _ = Task.Run(_appleLyrics.OpenLyricsPanelIfNeeded);
+            if (_usingAppleLyrics && _appleReadFailures >= 12)
+                MarkLyricsUnavailable(_appleLyrics.LastFailureReason);
         }
         finally
         {
@@ -592,6 +605,7 @@ internal sealed class MediaLyricsController : IDisposable
         _candidateIndex = index;
         _lines = _candidates[index].Lines;
         _usingAppleLyrics = false;
+        _appleFallbackUnavailable = false;
         _lyricsLoadKind = LyricsLoadKind.Lrclib;
         if (remember) _choiceStore.Set(_mediaKey, _candidates[index].Key);
         _localLyrics.SetCache(_mediaKey, LrcParser.Serialize(_lines), _candidates[index].Label);
@@ -718,11 +732,30 @@ internal sealed class MediaLyricsController : IDisposable
         _candidates = [];
         _candidateIndex = -1;
         _usingAppleLyrics = false;
+        _appleFallbackUnavailable = false;
         _lyricsLoadKind = kind;
         ResetTimingState();
         _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
         UpdateRenderScheduling(renderImmediately: true);
         return true;
+    }
+
+    private void MarkLyricsUnavailable(string detail)
+    {
+        _usingAppleLyrics = false;
+        _appleFallbackUnavailable = true;
+        _lyricsLoadKind = LyricsLoadKind.Unavailable;
+        _lines = [];
+        _appleCurrent = "";
+        _appleNext = "";
+        _appleInstrumental = false;
+        UpdateRenderScheduling();
+        var reason = string.IsNullOrWhiteSpace(detail)
+            ? "在线歌词和 Apple 官方后备都无法读取"
+            : detail.Trim().TrimEnd('。');
+        _render(string.IsNullOrWhiteSpace(_title) ? "未找到歌词" : _title,
+            $"{reason}。可在管理器中导入本地 LRC，或稍后点击“重新获取歌词”重试。",
+            0, _artist);
     }
 
     public bool SetLocalLyrics(string lrc, string label, out string error)
