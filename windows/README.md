@@ -65,6 +65,10 @@ Windows 专用实现，方便后续用 macOS 的媒体适配器和 AppKit/SwiftU
 Microsoft YaHei UI。管理器还可导入、编辑和删除单曲本地 LRC、清理离线缓存，以及新增、修改、
 删除歌手配色，设置渐变顺序并导入/导出 JSON 配色库。歌词悬浮窗不提供管理入口，以减少误触。
 
+本地歌词编辑器同时支持普通 LRC 与 Enhanced LRC。表格模式中按 `F8` 可用当前播放位置为当前行
+打点并自动前进，按 `Shift+F8` 可逐词打点；当前行可按 50 毫秒微调，整首歌词可批量平移。
+存在完整词级时间戳时卡拉 OK 模式按真实词段时间扫色，否则继续使用行级时间轴估算。
+
 LRCLIB 找不到同步歌词时，程序会通过 Windows UI Automation 自动打开 Apple Music 的歌词面板，读取其中
 AutomationId 为 `Line`（以及部分版本中的 `CurrentLine`）的公开文本元素。它不加载 Apple 私有 DLL，也不
 读取或保存 Apple 账户 Cookie/令牌。用户在管理界面主动开启实验自动对时后，官方当前行才会作为校准信号；

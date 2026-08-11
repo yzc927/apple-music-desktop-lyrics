@@ -19,6 +19,8 @@ jobs:
           dotnet-version: 10.0.x
       - name: Build Windows app
         run: dotnet build windows/AppleMusicDesktopLyrics.csproj -c Release
+      - name: Run Windows core tests
+        run: dotnet run --project windows/CoreTests/AppleMusicDesktopLyrics.CoreTests.csproj -c Release
 
   macos:
     runs-on: macos-14

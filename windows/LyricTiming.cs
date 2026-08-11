@@ -80,6 +80,46 @@ internal static class LyricTiming
         return Math.Clamp(elapsed / sweepDuration, 0, 1);
     }
 
+    public static double EnhancedProgress(
+        LyricLine line, TimeSpan position, TimeSpan fallbackEnd)
+    {
+        if (line.Segments is not { Count: > 0 } segments || IsInstrumental(line.Text)) return 0;
+        if (position < segments[0].Time) return 0;
+
+        var weights = segments.Select(segment => Math.Max(0.25, VisualUnits(segment.Text))).ToArray();
+        var total = weights.Sum();
+        var completed = 0d;
+        for (var index = 0; index < segments.Count; index++)
+        {
+            var end = index + 1 < segments.Count
+                ? segments[index + 1].Time
+                : line.ExplicitEndTime ?? fallbackEnd;
+            if (position >= end)
+            {
+                completed += weights[index];
+                continue;
+            }
+            if (position < segments[index].Time) break;
+            var duration = Math.Max(0.01, (end - segments[index].Time).TotalSeconds);
+            var local = Math.Clamp((position - segments[index].Time).TotalSeconds / duration, 0, 1);
+            completed += weights[index] * local;
+            break;
+        }
+        return total <= 0 ? 0 : Math.Clamp(completed / total, 0, 1);
+    }
+
+    public static int ActiveSegmentIndex(LyricLine line, TimeSpan position)
+    {
+        if (line.Segments is not { Count: > 0 } segments) return -1;
+        var result = -1;
+        for (var index = 0; index < segments.Count; index++)
+        {
+            if (segments[index].Time > position) break;
+            result = index;
+        }
+        return result;
+    }
+
     public static bool IsInstrumental(string? text) =>
         string.IsNullOrWhiteSpace(text) || text is "♪" or "•••" ||
         text.All(character => character is '•' or '.' or '·' || char.IsWhiteSpace(character));
@@ -186,6 +226,9 @@ internal static class LyricTiming
         }
         return units;
     }
+
+    private static double VisualUnits(string text) =>
+        text.EnumerateRunes().Sum(rune => rune.Value <= 0x024f ? 0.58 : 1d);
 
     private static string NormalizeText(string? text)
     {

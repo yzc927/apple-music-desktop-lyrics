@@ -120,6 +120,7 @@
                                                FontWeight="SemiBold" />
                                     <WrapPanel>
                                         <Button Content="导入 .lrc" Margin="0,0,8,8" Click="ImportLyrics_Click" />
+                                        <Button Content="导出当前 .lrc" Margin="0,0,8,8" Click="ExportLyrics_Click" />
                                         <Button Content="编辑当前歌词" Margin="0,0,8,8" Click="EditLyrics_Click" />
                                         <Button Content="删除本地覆盖" Margin="0,0,8,8" Click="RemoveLocalLyrics_Click" />
                                         <Button Content="清空歌词缓存" Margin="0,0,8,8" Click="ClearLyricsCache_Click" />

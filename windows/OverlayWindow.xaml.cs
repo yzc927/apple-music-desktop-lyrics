@@ -19,10 +19,12 @@ public partial class OverlayWindow : Window, IDisposable
     private const int GwlExStyle = -20;
     private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
+    private const int WmNcHitTest = 0x0084;
+    private const int HtTransparent = -1;
     private readonly MediaLyricsController _controller;
     private readonly DispatcherTimer _lockedHoverTimer;
-    private readonly DispatcherTimer _unlockedHitTestTimer;
     private readonly DispatcherTimer _placementSaveTimer;
+    private HwndSource? _hwndSource;
     private UnlockWindow? _unlockWindow;
     private DateTimeOffset? _lockedHoverStartedAt;
     private bool _unlockRequestedVisible;
@@ -30,7 +32,6 @@ public partial class OverlayWindow : Window, IDisposable
     private double _unlockTop;
     private bool _clickThrough;
     private bool _locked;
-    private bool _outsideInteractiveRegion;
     private bool _allowClose;
     private double _highlightProgress;
     private double _highlightTextStart;
@@ -71,6 +72,7 @@ public partial class OverlayWindow : Window, IDisposable
     public bool HasLocalLyricsOverride => _controller.HasLocalLyricsOverride;
     public bool HasCachedLyrics => _controller.HasCachedLyrics;
     public string CurrentLrcText => _controller.CurrentLrcText;
+    public TimeSpan CurrentPlaybackPosition => _controller.GetAuthoringPosition();
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
@@ -85,12 +87,11 @@ public partial class OverlayWindow : Window, IDisposable
         };
         _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
             DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
-        _unlockedHitTestTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50),
-            DispatcherPriority.Input, (_, _) => TrackUnlockedPointer(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
         CurrentRubyHighlightLine.Clip = _rubyHighlightClip;
         CurrentRubyHighlightLine.SizeChanged += (_, _) => UpdateHighlightClip();
         Loaded += OnLoaded;
+        SourceInitialized += OnSourceInitialized;
         LocationChanged += (_, _) => SchedulePlacementSave();
         SizeChanged += (_, _) =>
         {
@@ -103,6 +104,7 @@ public partial class OverlayWindow : Window, IDisposable
         LoadSettings();
         _controller = new MediaLyricsController(SetLines, ShowToast);
         _controller.SetAutomaticCalibration(_automaticLyricsCalibration, notify: false);
+        _controller.SetPresentationState(visible: false, _karaokeMode);
         _controller.Start();
     }
 
@@ -133,8 +135,30 @@ public partial class OverlayWindow : Window, IDisposable
         ApplyExtendedStyles();
         UpdateTypography();
         UpdateLyricsModeIcon();
-        _unlockedHitTestTimer.Start();
+        _controller.SetPresentationState(visible: true, _karaokeMode);
         SaveSettings();
+    }
+
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        _hwndSource?.AddHook(WindowMessageHook);
+    }
+
+    private IntPtr WindowMessageHook(
+        IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != WmNcHitTest || _locked || _clickThrough) return IntPtr.Zero;
+
+        var packed = lParam.ToInt64();
+        var screenPoint = new System.Windows.Point(
+            unchecked((short)(packed & 0xffff)),
+            unchecked((short)((packed >> 16) & 0xffff)));
+        var localPoint = PointFromScreen(screenPoint);
+        if (InteractiveRegion().Contains(localPoint)) return IntPtr.Zero;
+
+        handled = true;
+        return new IntPtr(HtTransparent);
     }
 
     private void UpdateTypography()
@@ -352,40 +376,6 @@ public partial class OverlayWindow : Window, IDisposable
     {
         var height = Math.Max(54, ActualHeight * 0.46);
         return new Rect(0, Math.Max(0, (ActualHeight - height) / 2), ActualWidth, height);
-    }
-
-    private void TrackUnlockedPointer()
-    {
-        if (!IsLoaded || !IsVisible) return;
-        if (_locked || _clickThrough)
-        {
-            if (_outsideInteractiveRegion)
-            {
-                _outsideInteractiveRegion = false;
-                ApplyExtendedStyles();
-            }
-            return;
-        }
-
-        var cursor = System.Windows.Forms.Cursor.Position;
-        var local = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
-        var outside = !InteractiveRegion().Contains(local);
-        if (outside == _outsideInteractiveRegion) return;
-
-        _outsideInteractiveRegion = outside;
-        if (outside)
-        {
-            Toolbar.Visibility = Visibility.Collapsed;
-            HoverBackdrop.Background = System.Windows.Media.Brushes.Transparent;
-        }
-        else
-        {
-            Toolbar.Visibility = Visibility.Visible;
-            ScheduleToolbarPlacement();
-            HoverBackdrop.Background = new SolidColorBrush(
-                System.Windows.Media.Color.FromArgb(64, 0, 0, 0));
-        }
-        ApplyExtendedStyles();
     }
 
     private void ScheduleToolbarPlacement()
@@ -629,6 +619,7 @@ public partial class OverlayWindow : Window, IDisposable
     public void ToggleKaraokeMode()
     {
         _karaokeMode = !_karaokeMode;
+        _controller.SetKaraokeMode(_karaokeMode);
         UpdateHighlightClip();
         UpdateLyricsModeIcon();
         SaveSettings();
@@ -785,7 +776,7 @@ public partial class OverlayWindow : Window, IDisposable
     {
         SaveSettings();
         _lockedHoverTimer.Stop();
-        _unlockedHitTestTimer.Stop();
+        _controller.SetPresentationState(visible: false, _karaokeMode);
         _lockedHoverStartedAt = null;
         _unlockRequestedVisible = false;
         _unlockWindow?.HideImmediately();
@@ -795,7 +786,7 @@ public partial class OverlayWindow : Window, IDisposable
     public void ShowFromTray()
     {
         Show();
-        _unlockedHitTestTimer.Start();
+        _controller.SetPresentationState(visible: true, _karaokeMode);
         if (_locked)
         {
             Dispatcher.BeginInvoke(() =>
@@ -822,7 +813,7 @@ public partial class OverlayWindow : Window, IDisposable
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
         var style = GetWindowLongPtr(handle, GwlExStyle).ToInt64() | WsExToolWindow;
-        style = (_clickThrough || _locked || _outsideInteractiveRegion)
+        style = (_clickThrough || _locked)
             ? style | WsExTransparent
             : style & ~WsExTransparent;
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
@@ -833,7 +824,8 @@ public partial class OverlayWindow : Window, IDisposable
         SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
-        _unlockedHitTestTimer.Stop();
+        _hwndSource?.RemoveHook(WindowMessageHook);
+        _hwndSource = null;
         _unlockWindow?.Close();
         _controller.Dispose();
     }

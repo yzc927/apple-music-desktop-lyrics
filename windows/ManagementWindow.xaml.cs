@@ -131,7 +131,8 @@ public partial class ManagementWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "导入当前歌曲的 LRC 歌词", Filter = "LRC 同步歌词 (*.lrc)|*.lrc|文本文件 (*.txt)|*.txt"
+            Title = "导入当前歌曲的 LRC / Enhanced LRC 歌词",
+            Filter = "LRC 与 Enhanced LRC (*.lrc)|*.lrc|文本文件 (*.txt)|*.txt"
         };
         if (dialog.ShowDialog(this) != true) return;
         try
@@ -146,11 +147,30 @@ public partial class ManagementWindow : Window
 
     private void EditLyrics_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new LyricsEditorWindow(_overlay.CurrentLrcText) { Owner = this };
+        var editor = new LyricsEditorWindow(
+            _overlay.CurrentLrcText, () => _overlay.CurrentPlaybackPosition) { Owner = this };
         if (editor.ShowDialog() != true) return;
         if (!_overlay.SaveLocalLyrics(editor.LyricsText, "本地编辑", out var error))
             MessageBox.Show(this, error, "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
         RefreshState();
+    }
+
+    private void ExportLyrics_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_overlay.CurrentLrcText))
+        {
+            MessageBox.Show(this, "当前没有可导出的同步歌词。", "无法导出");
+            return;
+        }
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "导出当前 LRC / Enhanced LRC 歌词",
+            Filter = "LRC 同步歌词 (*.lrc)|*.lrc|文本文件 (*.txt)|*.txt",
+            FileName = "lyrics.lrc"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        try { File.WriteAllText(dialog.FileName, _overlay.CurrentLrcText); }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
     private void RemoveLocalLyrics_Click(object sender, RoutedEventArgs e)

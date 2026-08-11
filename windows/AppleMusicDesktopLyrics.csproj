@@ -17,4 +17,7 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>None</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="CoreTests\**\*.cs" />
+  </ItemGroup>
 </Project>

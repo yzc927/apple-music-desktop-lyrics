@@ -59,6 +59,8 @@ internal sealed class MediaLyricsController : IDisposable
     private int _completionHoldIndex = -1;
     private long _completionHoldStartedTicks;
     private bool _automaticCalibrationEnabled;
+    private bool _presentationVisible;
+    private bool _karaokeMode;
     private LyricsLoadKind _lyricsLoadKind;
     private long _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
     private long _lastWatchdogReadTicks;
@@ -71,7 +73,7 @@ internal sealed class MediaLyricsController : IDisposable
         // 30 fps keeps short/rap lines smooth. At the old 100 ms cadence a
         // 150–250 ms LRC row only received one or two partial sweep frames.
         _renderTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render,
-            (_, _) => Render(), Dispatcher.CurrentDispatcher);
+            (_, _) => RenderTimerTick(), Dispatcher.CurrentDispatcher);
         _pollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
             async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
         _applePollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background,
@@ -106,7 +108,6 @@ internal sealed class MediaLyricsController : IDisposable
         {
             _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             _pollTimer.Start();
-            _renderTimer.Start();
             _applePollTimer.Start();
             await PollAsync();
         }
@@ -126,6 +127,7 @@ internal sealed class MediaLyricsController : IDisposable
             if (_session is null)
             {
                 _playing = false;
+                UpdateRenderScheduling();
                 _render("正在等待 Apple Music…", "请先在 Apple Music 中播放一首歌曲", 0, "");
                 return;
             }
@@ -155,7 +157,9 @@ internal sealed class MediaLyricsController : IDisposable
             var key = $"{media.Title}\n{media.Artist}\n{timeline.EndTime.TotalSeconds:0}";
             var mediaChanged = key != _mediaKey;
             UpdatePlaybackClock(sampledPosition, playing, now, mediaChanged);
+            var playbackStateChanged = _playing != playing;
             _playing = playing;
+            UpdateRenderScheduling(renderImmediately: playbackStateChanged);
             if (!mediaChanged) return;
             _mediaKey = key;
             _lyricsOffset = _offsetStore.Get(_mediaKey);
@@ -253,6 +257,41 @@ internal sealed class MediaLyricsController : IDisposable
         return true;
     }
 
+    private void RenderTimerTick()
+    {
+        Render();
+        UpdateRenderScheduling();
+    }
+
+    private void UpdateRenderScheduling(bool renderImmediately = false)
+    {
+        var shouldRender = _presentationVisible && _session is not null && _playing &&
+            !(_usingAppleLyrics && !_karaokeMode);
+        if (!shouldRender)
+        {
+            _renderTimer.Stop();
+            if (renderImmediately && _presentationVisible) Render();
+            return;
+        }
+
+        var interval = NextRenderInterval();
+        if (_renderTimer.Interval != interval) _renderTimer.Interval = interval;
+        if (!_renderTimer.IsEnabled) _renderTimer.Start();
+        if (renderImmediately) Render();
+    }
+
+    private TimeSpan NextRenderInterval()
+    {
+        if (_karaokeMode) return TimeSpan.FromMilliseconds(33);
+        if (_lines.Count == 0) return TimeSpan.FromMilliseconds(500);
+
+        var position = EffectivePosition();
+        var nextLine = _lines.FirstOrDefault(line => line.Time > position);
+        if (nextLine is null) return TimeSpan.FromMilliseconds(500);
+        var milliseconds = (nextLine.Time - position).TotalMilliseconds;
+        return TimeSpan.FromMilliseconds(Math.Clamp(milliseconds, 40, 500));
+    }
+
     private void Render()
     {
         if (_usingAppleLyrics)
@@ -278,7 +317,7 @@ internal sealed class MediaLyricsController : IDisposable
         var renderTicks = Stopwatch.GetTimestamp();
         if (previousIndex < 0 || index <= previousIndex)
             _completionHoldIndex = -1;
-        if (previousIndex >= 0 && index == previousIndex + 1)
+        if (_karaokeMode && previousIndex >= 0 && index == previousIndex + 1)
         {
             if (_completionHoldIndex == index)
             {
@@ -307,7 +346,12 @@ internal sealed class MediaLyricsController : IDisposable
         _lastRenderedIndex = index;
         var current = index >= 0 ? LyricTiming.DisplayText(_lines[index].Text) : _title;
         var next = index + 1 < _lines.Count ? LyricTiming.DisplayText(_lines[index + 1].Text) : "";
-        var progress = LyricTiming.Progress(_lines, index, position, _secondsPerVocalUnit);
+        var fallbackEnd = index + 1 < _lines.Count
+            ? _lines[index + 1].Time
+            : _lines[index].ExplicitEndTime ?? _lines[index].Time + TimeSpan.FromSeconds(2);
+        var progress = _lines[index].HasWordTiming
+            ? LyricTiming.EnhancedProgress(_lines[index], position, fallbackEnd)
+            : LyricTiming.Progress(_lines, index, position, _secondsPerVocalUnit);
         if (index == _lastProgressIndex)
             progress = Math.Max(progress, _lastProgress);
         else
@@ -389,6 +433,9 @@ internal sealed class MediaLyricsController : IDisposable
 
     private void ApplyAppleSnapshot(AppleLyricsSnapshot snapshot)
     {
+        var changed = !string.Equals(_appleCurrent, snapshot.Current, StringComparison.Ordinal) ||
+            !string.Equals(_appleNext, snapshot.Next, StringComparison.Ordinal) ||
+            _appleInstrumental != snapshot.IsInstrumental;
         if (!string.Equals(_appleCurrent, snapshot.Current, StringComparison.Ordinal))
         {
             var nextLineStartedAt = AdvancePlaybackClock(Stopwatch.GetTimestamp());
@@ -398,6 +445,8 @@ internal sealed class MediaLyricsController : IDisposable
         }
         _appleNext = snapshot.Next;
         _appleInstrumental = snapshot.IsInstrumental;
+        if (changed && _presentationVisible && !_karaokeMode) RenderAppleLyrics();
+        UpdateRenderScheduling();
     }
 
     private void LearnAppleLyricsPace(TimeSpan nextLineStartedAt)
@@ -548,6 +597,7 @@ internal sealed class MediaLyricsController : IDisposable
         _localLyrics.SetCache(_mediaKey, LrcParser.Serialize(_lines), _candidates[index].Label);
         ResetTimingState();
         _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
+        UpdateRenderScheduling(renderImmediately: true);
     }
 
     private void ResetTimingState()
@@ -671,6 +721,7 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsLoadKind = kind;
         ResetTimingState();
         _secondsPerVocalUnit = LyricTiming.EstimateSecondsPerUnit(_lines);
+        UpdateRenderScheduling(renderImmediately: true);
         return true;
     }
 
@@ -719,6 +770,23 @@ internal sealed class MediaLyricsController : IDisposable
         if (notify)
             ShowTransient(enabled ? "已开启 Apple 自动对时" : "已关闭 Apple 自动对时");
     }
+
+    public void SetPresentationState(bool visible, bool karaokeMode)
+    {
+        _presentationVisible = visible;
+        _karaokeMode = karaokeMode;
+        UpdateRenderScheduling(renderImmediately: visible);
+    }
+
+    public void SetKaraokeMode(bool enabled)
+    {
+        if (_karaokeMode == enabled) return;
+        _karaokeMode = enabled;
+        UpdateRenderScheduling(renderImmediately: true);
+    }
+
+    public TimeSpan GetAuthoringPosition() =>
+        AdvancePlaybackClock(Stopwatch.GetTimestamp());
 
     public void RefreshLyrics()
     {
