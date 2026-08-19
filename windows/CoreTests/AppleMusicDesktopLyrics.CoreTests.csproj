@@ -10,5 +10,6 @@
     <Compile Include="..\LyricTiming.cs" Link="LyricTiming.cs" />
     <Compile Include="..\EditableLyrics.cs" Link="EditableLyrics.cs" />
     <Compile Include="..\StartupSettingsMigration.cs" Link="StartupSettingsMigration.cs" />
+    <Compile Include="..\AppleUiPollingPolicy.cs" Link="AppleUiPollingPolicy.cs" />
   </ItemGroup>
 </Project>

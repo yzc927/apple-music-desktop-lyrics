@@ -64,7 +64,7 @@ internal sealed class MediaLyricsController : IDisposable
     private bool _karaokeMode;
     private LyricsLoadKind _lyricsLoadKind;
     private long _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
-    private long _lastWatchdogReadTicks;
+    private long _nextAppleReadTicks;
     private long _uiPlaybackEvidenceUntilTicks;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
@@ -77,7 +77,10 @@ internal sealed class MediaLyricsController : IDisposable
             (_, _) => RenderTimerTick(), Dispatcher.CurrentDispatcher);
         _pollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background,
             async (_, _) => await PollAsync(), Dispatcher.CurrentDispatcher);
-        _applePollTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background,
+        // UI Automation searches the Apple Music WebView. Four full tree walks
+        // per second can make Apple Music unresponsive when CurrentLine is not
+        // exposed, so use a conservative base cadence and back off on failures.
+        _applePollTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
             async (_, _) => await PollAppleLyricsAsync(), Dispatcher.CurrentDispatcher);
     }
 
@@ -177,6 +180,7 @@ internal sealed class MediaLyricsController : IDisposable
             _appleNext = "";
             _appleInstrumental = false;
             _appleReadFailures = 0;
+            _nextAppleReadTicks = 0;
             ResetTimingState();
             _render(media.Title, $"{media.Artist} · 正在读取 Apple Music 歌词…", 0, _artist);
             await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
@@ -387,34 +391,31 @@ internal sealed class MediaLyricsController : IDisposable
         if (_applePolling || string.IsNullOrWhiteSpace(_title)) return;
         if (_appleFallbackUnavailable && !_usingAppleLyrics && _lines.Count == 0) return;
         var nowTicks = Stopwatch.GetTimestamp();
-        var stalled = !_usingAppleLyrics && _lines.Count > 0 &&
-            Stopwatch.GetElapsedTime(_lastLineAdvancedTicks, nowTicks) >= TimeSpan.FromSeconds(6);
-        if (!_usingAppleLyrics && (_lines.Count == 0 || (!_automaticCalibrationEnabled && !stalled)))
-            return;
-        if (stalled && !_automaticCalibrationEnabled &&
-            Stopwatch.GetElapsedTime(_lastWatchdogReadTicks, nowTicks) < TimeSpan.FromMilliseconds(750))
-            return;
-        _lastWatchdogReadTicks = nowTicks;
+        if (nowTicks < _nextAppleReadTicks) return;
+        // UI Automation is only justified for the official fallback or when
+        // the user explicitly enabled Apple-based automatic calibration.
+        if (!AppleUiPollingPolicy.ShouldRead(
+                _usingAppleLyrics, _automaticCalibrationEnabled, _lines.Count)) return;
         _applePolling = true;
         try
         {
+            var readStartedTicks = Stopwatch.GetTimestamp();
             var snapshot = await Task.Run(() =>
                 _appleLyrics.TryRead(allowBoundaryEstimate: _usingAppleLyrics));
+            var readElapsed = Stopwatch.GetElapsedTime(readStartedTicks);
             if (snapshot is not null)
             {
                 _appleReadFailures = 0;
+                ScheduleNextAppleRead(AppleUiPollingPolicy.NextDelay(
+                    true, 0, readElapsed));
                 if (_usingAppleLyrics) ApplyAppleSnapshot(snapshot);
-                else
-                {
-                    if (stalled && ApplyStallRecoverySnapshot(snapshot)) return;
-                    ApplyCalibrationSnapshot(snapshot);
-                }
+                else ApplyCalibrationSnapshot(snapshot);
                 return;
             }
 
             _appleReadFailures++;
-            if (_usingAppleLyrics && _appleReadFailures == 4)
-                _ = Task.Run(_appleLyrics.OpenLyricsPanelIfNeeded);
+            ScheduleNextAppleRead(AppleUiPollingPolicy.NextDelay(
+                false, _appleReadFailures, readElapsed));
             if (_usingAppleLyrics && _appleReadFailures >= 12)
                 MarkLyricsUnavailable(_appleLyrics.LastFailureReason);
         }
@@ -423,6 +424,10 @@ internal sealed class MediaLyricsController : IDisposable
             _applePolling = false;
         }
     }
+
+    private void ScheduleNextAppleRead(TimeSpan delay) =>
+        _nextAppleReadTicks = Stopwatch.GetTimestamp() +
+            (long)(Stopwatch.Frequency * delay.TotalSeconds);
 
     private bool ApplyStallRecoverySnapshot(AppleLyricsSnapshot snapshot)
     {

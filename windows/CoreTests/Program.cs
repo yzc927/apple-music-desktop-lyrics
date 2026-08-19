@@ -45,4 +45,20 @@ Equal(false, StartupSettingsMigration.Resolve(null, false), "new install startup
 Equal(true, StartupSettingsMigration.Resolve(null, true), "legacy startup is preserved");
 Equal(false, StartupSettingsMigration.Resolve(false, true), "explicit startup setting wins");
 
+Equal(false, AppleUiPollingPolicy.ShouldRead(false, false, 20),
+    "ordinary LRCLIB playback does not touch Apple UI Automation");
+Equal(true, AppleUiPollingPolicy.ShouldRead(true, false, 0),
+    "official Apple fallback may read UI Automation");
+Equal(true, AppleUiPollingPolicy.ShouldRead(false, true, 20),
+    "explicit automatic calibration may read UI Automation");
+Equal(TimeSpan.FromMilliseconds(1500),
+    AppleUiPollingPolicy.NextDelay(true, 0, TimeSpan.FromMilliseconds(100)),
+    "successful UI Automation read is rate limited");
+Equal(TimeSpan.FromSeconds(5),
+    AppleUiPollingPolicy.NextDelay(false, 1, TimeSpan.FromMilliseconds(100)),
+    "first failed UI Automation read backs off");
+Equal(TimeSpan.FromSeconds(60),
+    AppleUiPollingPolicy.NextDelay(false, 20, TimeSpan.FromMilliseconds(100)),
+    "failed UI Automation read backoff is capped");
+
 Console.WriteLine("Windows core tests passed.");

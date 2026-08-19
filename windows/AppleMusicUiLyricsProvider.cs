@@ -13,6 +13,9 @@ internal sealed record AppleLyricsSnapshot(string Current, string Next, bool IsI
 /// </summary>
 internal sealed class AppleMusicUiLyricsProvider
 {
+    private const uint WmNull = 0;
+    private const uint SmtoBlock = 0x0001;
+    private const uint SmtoAbortIfHung = 0x0002;
     private const string LyricsButtonId = "LyricsToggleButton";
     private const string CurrentLineId = "CurrentLine";
     private const string CurrentInstrumentalId = "CurrentInstrumental";
@@ -33,12 +36,15 @@ internal sealed class AppleMusicUiLyricsProvider
     public async Task<AppleLyricsSnapshot?> PrepareAsync(string title, CancellationToken cancellationToken)
     {
         await Task.Run(OpenLyricsPanelIfNeeded, cancellationToken);
-        for (var attempt = 0; attempt < 8; attempt++)
+        // UI Automation walks execute inside Apple Music's WebView process.
+        // Keep fallback discovery bounded so an unexposed lyrics tree cannot
+        // continuously consume Apple Music's UI thread.
+        for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var snapshot = await Task.Run(() => TryRead(title), cancellationToken);
             if (snapshot is not null) return snapshot;
-            await Task.Delay(250, cancellationToken);
+            await Task.Delay(750, cancellationToken);
         }
         return null;
     }
@@ -47,10 +53,12 @@ internal sealed class AppleMusicUiLyricsProvider
         string? title = null, bool allowBoundaryEstimate = true)
     {
         LastStrategyName = "";
-        var roots = GetRoots();
+        var roots = GetRoots(out var foundUnresponsiveWindow);
         if (roots.Count == 0)
         {
-            LastFailureReason = "未找到可访问的 Apple Music 主窗口";
+            LastFailureReason = foundUnresponsiveWindow
+                ? "Apple Music 主窗口无响应，已暂停官方歌词读取"
+                : "未找到可访问的 Apple Music 主窗口";
             return null;
         }
 
@@ -93,7 +101,7 @@ internal sealed class AppleMusicUiLyricsProvider
 
     public void OpenLyricsPanelIfNeeded()
     {
-        foreach (var root in GetRoots())
+        foreach (var root in GetRoots(out _))
         {
             try
             {
@@ -200,8 +208,9 @@ internal sealed class AppleMusicUiLyricsProvider
         return string.Equals(candidate, title.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static IReadOnlyList<AutomationElement> GetRoots()
+    private static IReadOnlyList<AutomationElement> GetRoots(out bool foundUnresponsiveWindow)
     {
+        foundUnresponsiveWindow = false;
         var roots = new List<AutomationElement>();
         var handles = new HashSet<IntPtr>();
         var processes = Process.GetProcessesByName("AppleMusic");
@@ -213,6 +222,11 @@ internal sealed class AppleMusicUiLyricsProvider
                 {
                     var handle = process.MainWindowHandle;
                     if (handle == IntPtr.Zero || !handles.Add(handle)) continue;
+                    if (!IsWindowResponsive(handle))
+                    {
+                        foundUnresponsiveWindow = true;
+                        continue;
+                    }
                     roots.Add(AutomationElement.FromHandle(handle));
                 }
                 catch (InvalidOperationException) { }
@@ -224,6 +238,15 @@ internal sealed class AppleMusicUiLyricsProvider
         }
         return roots;
     }
+
+    private static bool IsWindowResponsive(IntPtr handle) =>
+        SendMessageTimeout(handle, WmNull, UIntPtr.Zero, IntPtr.Zero,
+            SmtoBlock | SmtoAbortIfHung, 250, out _) != IntPtr.Zero;
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW",
+        ExactSpelling = true, SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg,
+        UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
 
     private sealed record AppleLyricsReadContext(
         AutomationElement Root, bool AllowBoundaryEstimate);
