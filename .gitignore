@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 **/publish/
+**/publish-stage/
 **/publish-update/
 **/publish-next/
 **/artifacts/

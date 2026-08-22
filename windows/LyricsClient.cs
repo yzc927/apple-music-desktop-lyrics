@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Reflection;
 
 namespace AppleMusicDesktopLyrics;
 
@@ -24,7 +25,9 @@ internal sealed partial class LyricsClient
 
     static LyricsClient()
     {
-        Http.DefaultRequestHeaders.UserAgent.ParseAdd("AppleMusicDesktopLyrics/0.2 (Windows companion app)");
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+        Http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            $"AppleMusicDesktopLyrics/{version} (Windows companion app)");
     }
 
     public async Task<IReadOnlyList<LyricLine>> GetAsync(

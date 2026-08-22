@@ -30,7 +30,7 @@ Apple Music Desktop Lyrics 是一个面向 Windows 的桌面歌词伴侣。它�
 
 ## 3. 系统要求
 
-- Windows 10 19041 或更高版本，推荐 Windows 11。
+- Windows 10 2004（19041）或更高版本，包括 Windows 11 x64。
 - Windows 版 Apple Music。
 - 默认使用 LRCLIB 同步歌词，需要能够访问互联网。
 - 使用自包含发布版时不需要另外安装 .NET；从源码运行时需要对应的 .NET SDK。
@@ -40,16 +40,21 @@ Apple Music Desktop Lyrics 是一个面向 Windows 的桌面歌词伴侣。它�
 正式发布程序位于：
 
 ```text
-windows/publish/AppleMusicDesktopLyrics.exe
+artifacts/windows-x64/AppleMusicDesktopLyrics.exe
 ```
 
 双击 EXE 即可启动。默认开启“跟随 Apple Music 自动显示 / 隐藏”：程序运行后会在托盘后台等待；
 Apple Music 打开时显示歌词窗口，Apple Music 完全退出后隐藏窗口。Windows 登录启动是独立设置，
 新安装默认关闭，可在管理器“常用设置”的“启动行为”中开启。旧版本已经注册启动项的电脑会自动保留开启状态。
+首次启动会主动打开管理界面，即使 Apple Music 尚未运行也不会看起来像“没有启动”。重复双击 EXE
+只会唤起已经运行的管理界面，不会再创建一套歌词窗口和托盘图标。
 后台托盘进程会继续等待下一次启动，这是再次自动打开歌词所必需的。可从托盘右键菜单关闭跟随功能；
 关闭后会移除登录启动项，歌词窗口改为由用户手动显示或隐藏。
 
 如果桌面快捷方式已经创建，它应指向上述发布程序。更新程序时保持该路径不变，快捷方式不需要重建。
+
+当前便携版未进行代码签名，因此浏览器下载后 Windows SmartScreen 可能显示“未知发布者”。请从正式
+Release 页面下载并核对同时提供的 SHA-256；确认一致后，可通过“更多信息”继续运行。
 
 管理界面分为“常用设置”和“歌手配色”两个页签。窗口无需拉到全屏：“常用设置”内部可以滚动，
 “歌手配色”页签会直接提供颜色编辑、导入导出和可滚动的歌手列表。
@@ -164,7 +169,7 @@ Liyuu 当前使用清透的天蓝渐变，主色为偏蓝色，辅色略亮。�
 
 ### 9.1 LRCLIB 同步歌词
 
-程序会先使用歌名、歌手、专辑和歌曲时长向 LRCLIB 查找同步 LRC，并保存最多八个通过时长、标题和歌手
+程序会先使用歌名和歌手向 LRCLIB 查找同步 LRC，并在本机使用专辑与歌曲时长筛选结果，保存最多八个通过时长、标题和歌手
 校验的候选。默认选择综合得分最高的版本，也可在管理界面切换并按歌曲记忆。LRCLIB 提供明确的逐行时间戳，
 便于应用手动时间偏移和正确处理伴奏空档，因此作为默认来源。第三方曲库可能缺歌，也可能匹配到现场版、
 伴奏版或不同长度的版本；无结果时程序会回退到 Apple Music。
@@ -266,8 +271,10 @@ LRCLIB 可能匹配到不同版本。请先在管理界面切换候选版本；�
 程序不会读取或保存 Apple ID、密码、Apple Music Cookie、令牌或私人资料。Apple 官方歌词来自
 Windows 无障碍接口中已经显示的文本。
 
-为了搜索默认同步歌词，歌名、歌手、专辑和歌曲时长会发送给 LRCLIB。
-窗口设置、字体、颜色、逐歌曲偏移和歌词版本选择只保存在本机。
+为了搜索默认同步歌词，歌名和歌手会发送给 LRCLIB；专辑和歌曲时长只在本机用于候选筛选。
+程序不包含遥测、广告或分析 SDK。窗口设置、字体、颜色、逐歌曲偏移、歌词版本选择、本地 LRC、
+歌词缓存和自定义歌手配色以普通 JSON 保存在当前 Windows 用户的本地应用数据目录，不会随 EXE
+上传或复制给其他用户。同一台电脑上能够读取该 Windows 账户文件的程序仍可能读取这些本地文件。
 
 锁定、置顶、鼠标穿透、字体、配色模式和歌词显示模式都会在每次变更后立即保存；窗口移动与缩放采用约
 250 毫秒的短暂合并写入，避免拖动过程中连续写盘。歌手配色库会忽略名称中的空白和英文大小写进行
@@ -279,10 +286,11 @@ Windows 无障碍接口中已经显示的文本。
 
 ```powershell
 dotnet build .\windows\AppleMusicDesktopLyrics.csproj -c Release
-dotnet publish .\windows\AppleMusicDesktopLyrics.csproj -c Release -o .\windows\publish
+.\scripts\publish-windows.ps1
 ```
 
-发布结果为单文件 Windows x64 程序。构建产生的 `bin`、`obj`、`publish` 和临时更新目录不会提交到 Git。
+发布结果为单文件 Windows x64 程序以及独立 SHA-256。构建产生的 `bin`、`obj`、`publish`、
+`publish-stage`、`artifacts` 和临时更新目录不会提交到 Git。
 
 ## 15. 其他播放器与 macOS 版本
 

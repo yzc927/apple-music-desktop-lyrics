@@ -5,6 +5,7 @@ namespace AppleMusicDesktopLyrics;
 
 public partial class App : System.Windows.Application
 {
+    private SingleInstanceCoordinator? _singleInstance;
     private OverlayWindow? _window;
     private ManagementWindow? _management;
     private Forms.NotifyIcon? _tray;
@@ -14,6 +15,21 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (e.Args.Any(argument => string.Equals(
+                argument, "--self-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            Shutdown(ReleaseSelfTest.Run());
+            return;
+        }
+
+        _singleInstance = new SingleInstanceCoordinator(
+            "AppleMusicDesktopLyrics", () => Dispatcher.BeginInvoke(ShowManagement));
+        if (!_singleInstance.IsPrimary)
+        {
+            Shutdown();
+            return;
+        }
 
         _window = new OverlayWindow();
         _followService = new AppleMusicFollowService();
@@ -80,8 +96,7 @@ public partial class App : System.Windows.Application
             if (_window.IsVisible) _window.HideToTray(); else _window.ShowFromTray();
         });
         _followService.Start();
-        if (e.Args.Any(argument => string.Equals(
-                argument, "--management", StringComparison.OrdinalIgnoreCase)))
+        if (ApplicationLaunchPolicy.ShouldShowManagement(_followService.IsFirstRun, e.Args))
             ShowManagement();
     }
 
@@ -133,6 +148,7 @@ public partial class App : System.Windows.Application
         _followService?.Dispose();
         _tray?.Dispose();
         _window?.Dispose();
+        _singleInstance?.Dispose();
         base.OnExit(e);
     }
 }

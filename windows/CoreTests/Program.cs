@@ -44,6 +44,26 @@ Equal(TimeSpan.FromSeconds(13.7), editable.ExplicitEndTime, "end shift");
 Equal(false, StartupSettingsMigration.Resolve(null, false), "new install startup default");
 Equal(true, StartupSettingsMigration.Resolve(null, true), "legacy startup is preserved");
 Equal(false, StartupSettingsMigration.Resolve(false, true), "explicit startup setting wins");
+Equal(false, ReleaseDefaults.AutomaticLyricsCalibration,
+    "new install automatic Apple calibration is opt-in");
+Equal(true, ApplicationLaunchPolicy.ShouldShowManagement(true, []),
+    "first run opens management even without Apple Music");
+Equal(true, ApplicationLaunchPolicy.ShouldShowManagement(false, ["--MANAGEMENT"]),
+    "management command is case insensitive");
+Equal(false, ApplicationLaunchPolicy.ShouldShowManagement(false, ["--background"]),
+    "ordinary background startup stays in the tray");
+Equal(0, ReleaseSelfTest.Run(), "release self test");
+
+var singleInstanceId = "AppleMusicDesktopLyrics.CoreTests." + Guid.NewGuid().ToString("N");
+using (var activationReceived = new ManualResetEventSlim())
+using (var primary = new SingleInstanceCoordinator(singleInstanceId, activationReceived.Set))
+{
+    Equal(true, primary.IsPrimary, "first app instance is primary");
+    using var secondary = new SingleInstanceCoordinator(singleInstanceId, activationReceived.Set);
+    Equal(false, secondary.IsPrimary, "second app instance is rejected");
+    Equal(true, activationReceived.Wait(TimeSpan.FromSeconds(2)),
+        "second app instance activates the first");
+}
 
 Equal(false, AppleUiPollingPolicy.ShouldRead(false, false, 20),
     "ordinary LRCLIB playback does not touch Apple UI Automation");

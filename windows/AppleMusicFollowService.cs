@@ -18,6 +18,7 @@ internal sealed class AppleMusicFollowService : IDisposable
 
     public AppleMusicFollowService()
     {
+        IsFirstRun = !File.Exists(SettingsPath);
         var settings = LoadSettings();
         Enabled = settings.FollowAppleMusic;
         StartupEnabled = StartupSettingsMigration.Resolve(
@@ -30,6 +31,7 @@ internal sealed class AppleMusicFollowService : IDisposable
     }
 
     public bool Enabled { get; private set; }
+    public bool IsFirstRun { get; }
     public bool StartupEnabled { get; private set; }
     public string? StartupRegistrationError { get; private set; }
     public event Action<bool>? RunningChanged;

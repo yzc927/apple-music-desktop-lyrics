@@ -90,23 +90,35 @@ public partial class ManagementWindow : Window
         var index = 0;
         foreach (var palette in ArtistColorEngine.GetCuratedPalettes())
         {
-            var row = new Grid { Height = 46, Background = index++ % 2 == 0 ? System.Windows.Media.Brushes.White :
+            var row = new Grid { Height = 56, Background = index++ % 2 == 0 ? System.Windows.Media.Brushes.White :
                 new SolidColorBrush(System.Windows.Media.Color.FromRgb(238, 240, 244)) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
             row.ColumnDefinitions.Add(new ColumnDefinition());
             row.Children.Add(new TextBlock
             {
                 Text = palette.Identity, Margin = new Thickness(14, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(70, 76, 88))
             });
+            var colorSummary = new Grid { Margin = new Thickness(8, 6, 14, 6) };
+            colorSummary.RowDefinitions.Add(new RowDefinition());
+            colorSummary.RowDefinitions.Add(new RowDefinition { Height = new GridLength(17) });
+            colorSummary.Children.Add(new TextBlock
+            {
+                Text = string.Join("  ", palette.Colors.Select(ToRgbHex)),
+                FontSize = 10,
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(103, 111, 126)),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+            });
             var preview = new Border
             {
-                Width = 210, Height = 22, CornerRadius = new CornerRadius(11),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 0, 14, 0),
+                Height = 15, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 2, 0, 0),
                 Background = CreateBrush(palette.Colors)
             };
-            Grid.SetColumn(preview, 1);
-            row.Children.Add(preview);
+            Grid.SetRow(preview, 1);
+            colorSummary.Children.Add(preview);
+            Grid.SetColumn(colorSummary, 1);
+            row.Children.Add(colorSummary);
             var rowButton = new WpfButton
             {
                 Content = row, Padding = new Thickness(0), Margin = new Thickness(0),

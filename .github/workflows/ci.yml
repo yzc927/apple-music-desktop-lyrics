@@ -21,6 +21,12 @@ jobs:
         run: dotnet build windows/AppleMusicDesktopLyrics.csproj -c Release
       - name: Run Windows core tests
         run: dotnet run --project windows/CoreTests/AppleMusicDesktopLyrics.CoreTests.csproj -c Release
+      - name: Publish Windows 10 and Windows 11 x64 app
+        shell: pwsh
+        run: ./scripts/publish-windows.ps1
+      - name: Run release self-test
+        shell: pwsh
+        run: ./scripts/test-windows-release.ps1 artifacts/windows-x64/AppleMusicDesktopLyrics.exe
 
   macos:
     runs-on: macos-14

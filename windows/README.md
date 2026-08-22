@@ -9,13 +9,15 @@
 
 ## 运行
 
-需要 Windows 10 1809 或更高版本，以及 .NET 10 Desktop Runtime。
+需要 Windows 10 2004（19041）或更高版本，包括 Windows 11。自包含发布版不需要安装 .NET；
+只有从源码运行时才需要 .NET 10 SDK。
 
 ```powershell
 dotnet run --project .\AppleMusicDesktopLyrics.csproj
 ```
 
-启动后先在 Apple Music 播放歌曲。未锁定时可拖动歌词调整位置，并从黑框右下角
+首次启动会打开管理界面；之后启动后先在 Apple Music 播放歌曲。重复双击只会唤起已有实例，
+不会产生多个托盘图标。未锁定时可拖动歌词调整位置，并从黑框右下角
 调整大小。未锁定时只有可见黑框接收鼠标，框外透明区域会自动穿透到下方应用。
 鼠标移入歌词会显示锁定、置顶和关闭按钮；关闭只会隐藏到系统
 托盘。托盘图标右键可再次显示、切换锁定/置顶/鼠标穿透、重新获取歌词或退出程序。
@@ -91,10 +93,13 @@ LRCLIB 找不到同步歌词时，程序会通过 Windows UI Automation 自动�
 ## 发布单文件程序
 
 ```powershell
-dotnet publish -c Release -o .\publish
+.\..\scripts\publish-windows.ps1
 ```
 
-Release 发布参数已经写入项目文件；输出位于 `publish` 目录，并只包含一个自包含 EXE。
+Release 发布参数已经写入项目文件；输出位于仓库根目录的 `artifacts/windows-x64`，
+并只包含一个自包含 EXE。脚本还会生成独立的 SHA-256 校验文件。
+当前便携版不做代码签名，因此从浏览器下载后 Windows SmartScreen 可能显示“未知发布者”。
+正式下载页会同时提供 SHA-256，用户应在运行前核对。
 
 ## 已知限制
 

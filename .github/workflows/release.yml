@@ -1,0 +1,46 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run Windows core tests
+        run: dotnet run --project windows/CoreTests/AppleMusicDesktopLyrics.CoreTests.csproj -c Release
+      - name: Publish Windows 10 and Windows 11 x64 app
+        shell: pwsh
+        run: ./scripts/publish-windows.ps1
+      - name: Run clean-profile release self-test
+        shell: pwsh
+        run: ./scripts/test-windows-release.ps1 artifacts/windows-x64/AppleMusicDesktopLyrics.exe
+      - name: Upload unsigned portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppleMusicDesktopLyrics-win-x64-unsigned
+          path: |
+            artifacts/windows-x64/AppleMusicDesktopLyrics.exe
+            artifacts/AppleMusicDesktopLyrics-win-x64.sha256
+          if-no-files-found: error
+      - name: Publish tagged GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            "artifacts/windows-x64/AppleMusicDesktopLyrics.exe" `
+            "artifacts/AppleMusicDesktopLyrics-win-x64.sha256" `
+            --generate-notes `
+            --notes "Unsigned portable build for Windows 10 version 2004 (19041) or later and Windows 11 x64. Windows SmartScreen may show an unknown publisher warning."

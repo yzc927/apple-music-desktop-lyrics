@@ -30,10 +30,17 @@ The macOS version reproduces behavior with native platform components rather tha
 Windows currently stores settings under `%LocalAppData%\AppleMusicDesktopLyrics`:
 
 - `settings.json`: overlay position, size, color mode, and selected font.
+- `app-settings.json`: Apple Music follow behavior and per-user startup preference.
 - `song-offsets.json`: per-recording lyric timing corrections.
 - `lyrics-choices.json`: the user's selected LRCLIB candidate for each recording.
+- `local-lyrics.json`: user-imported or edited LRC overrides.
+- `lyrics-cache.json`: up to 500 recently fetched lyrics for offline fallback.
+- `custom-artist-colors.json`: user-defined artist palettes.
 
 These files are not part of the repository and are excluded from source control.
+They are ordinary per-user JSON files rather than encrypted secrets. The Windows app contains no telemetry or
+advertising SDK. LRCLIB requests include the cleaned track title and artist; album and duration are used locally
+to rank the returned candidates. Apple account credentials, cookies, and tokens are never read.
 
 macOS uses `UserDefaults` for overlay settings, per-song offsets, lyric candidates, font and color choices. The native panel frame is
 stored with `NSStringFromRect`; invalid off-screen frames are ignored when the connected display layout changes.
