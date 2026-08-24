@@ -350,6 +350,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void Surface_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
+        UpdatePlaybackButton();
         Toolbar.Visibility = Visibility.Visible;
         ScheduleToolbarPlacement();
         HoverBackdrop.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(
@@ -394,6 +395,27 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void LockButton_Click(object sender, RoutedEventArgs e) => ToggleLock();
 
+    private async void PreviousTrackButton_Click(object sender, RoutedEventArgs e) =>
+        await _controller.PreviousTrackAsync();
+
+    private async void PlayPauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        var wasPlaying = _controller.IsPlaying;
+        if (await _controller.TogglePlayPauseAsync()) UpdatePlaybackButton(!wasPlaying);
+    }
+
+    private async void NextTrackButton_Click(object sender, RoutedEventArgs e) =>
+        await _controller.NextTrackAsync();
+
+    private void UpdatePlaybackButton(bool? playing = null)
+    {
+        var isPlaying = playing ?? _controller.IsPlaying;
+        PlayPauseIcon.Data = Geometry.Parse(isPlaying
+            ? "M6,4 H10 V20 H6 Z M14,4 H18 V20 H14 Z"
+            : "M7,4 V20 L19,12 Z");
+        PlayPauseButton.ToolTip = isPlaying ? "暂停" : "播放";
+    }
+
     private void PinButton_Click(object sender, RoutedEventArgs e) => ToggleTopmost();
 
     private void ColorButton_Click(object sender, RoutedEventArgs e) => ChooseHighlightColor();
@@ -419,6 +441,9 @@ public partial class OverlayWindow : Window, IDisposable
         ResizeMode = _locked ? ResizeMode.NoResize : ResizeMode.CanResize;
         Grip.Visibility = _locked ? Visibility.Collapsed : Visibility.Visible;
         var unlockedVisibility = _locked ? Visibility.Collapsed : Visibility.Visible;
+        PreviousTrackButton.Visibility = unlockedVisibility;
+        PlayPauseButton.Visibility = unlockedVisibility;
+        NextTrackButton.Visibility = unlockedVisibility;
         SlowButton.Visibility = unlockedVisibility;
         FastButton.Visibility = unlockedVisibility;
         PinButton.Visibility = unlockedVisibility;

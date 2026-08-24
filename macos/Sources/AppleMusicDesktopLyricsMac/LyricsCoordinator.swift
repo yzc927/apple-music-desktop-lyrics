@@ -67,6 +67,32 @@ final class LyricsCoordinator: ObservableObject {
         _ = appleLyrics.requestPermission(prompt: true)
     }
 
+    func previousTrack() { runPlaybackCommand(player.previousTrack) }
+
+    func togglePlayPause() {
+        let wasPlaying = display.isPlaying
+        runPlaybackCommand(player.togglePlayPause) { [weak self] in
+            self?.display.isPlaying = !wasPlaying
+        }
+    }
+
+    func nextTrack() { runPlaybackCommand(player.nextTrack) }
+
+    private func runPlaybackCommand(
+        _ command: @escaping () async -> Bool,
+        onSuccess: (() -> Void)? = nil
+    ) {
+        Task {
+            guard await command() else {
+                showToast("无法控制 Apple Music")
+                return
+            }
+            onSuccess?()
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            await poll()
+        }
+    }
+
     func adjustOffset(_ delta: Double) {
         settings.adjustOffset(for: songKey, by: delta)
         lastRenderedIndex = -1

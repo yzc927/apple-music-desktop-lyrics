@@ -106,6 +106,39 @@ internal sealed class MediaLyricsController : IDisposable
     public bool HasLocalLyricsOverride => _localLyrics.HasOverride(_mediaKey);
     public bool HasCachedLyrics => _localLyrics.HasCache(_mediaKey);
     public string CurrentLrcText => _lines.Count == 0 ? "" : LrcParser.Serialize(_lines);
+    public bool IsPlaying => _playing;
+
+    public async Task<bool> PreviousTrackAsync() => await RunPlaybackCommandAsync(
+        session => session.TrySkipPreviousAsync(), "无法切换到上一首");
+
+    public async Task<bool> TogglePlayPauseAsync() => await RunPlaybackCommandAsync(
+        session => session.TryTogglePlayPauseAsync(), "无法播放或暂停");
+
+    public async Task<bool> NextTrackAsync() => await RunPlaybackCommandAsync(
+        session => session.TrySkipNextAsync(), "无法切换到下一首");
+
+    private async Task<bool> RunPlaybackCommandAsync(
+        Func<GlobalSystemMediaTransportControlsSession, Windows.Foundation.IAsyncOperation<bool>> command,
+        string failureMessage)
+    {
+        var session = _session;
+        if (session is null)
+        {
+            _notify("请先在 Apple Music 中播放一首歌曲");
+            return false;
+        }
+        try
+        {
+            var accepted = await command(session);
+            if (!accepted) _notify(failureMessage);
+            return accepted;
+        }
+        catch (Exception ex)
+        {
+            _notify($"{failureMessage}：{ex.Message}");
+            return false;
+        }
+    }
 
     public async void Start()
     {

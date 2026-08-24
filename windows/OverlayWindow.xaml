@@ -76,6 +76,21 @@
                         <Setter Property="Cursor" Value="Hand" />
                     </Style>
                 </StackPanel.Resources>
+                <Button x:Name="PreviousTrackButton" Width="29" ToolTip="上一首" Click="PreviousTrackButton_Click">
+                    <Viewbox Width="17" Height="17">
+                        <Path Fill="White" Data="M5,4 H7 V20 H5 Z M19,4 V20 L8,12 Z" />
+                    </Viewbox>
+                </Button>
+                <Button x:Name="PlayPauseButton" Width="29" ToolTip="播放" Click="PlayPauseButton_Click">
+                    <Viewbox Width="17" Height="17">
+                        <Path x:Name="PlayPauseIcon" Fill="White" Data="M7,4 V20 L19,12 Z" />
+                    </Viewbox>
+                </Button>
+                <Button x:Name="NextTrackButton" Width="29" ToolTip="下一首" Click="NextTrackButton_Click">
+                    <Viewbox Width="17" Height="17">
+                        <Path Fill="White" Data="M17,4 H19 V20 H17 Z M5,4 L16,12 L5,20 Z" />
+                    </Viewbox>
+                </Button>
                 <Button x:Name="SlowButton" ToolTip="歌词慢 0.5 秒" Click="SlowButton_Click">
                     <Grid Width="21" Height="19">
                         <Path Width="17" Height="13" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,1,0,0"

@@ -84,6 +84,12 @@ struct OverlayView: View {
     @ViewBuilder
     private func toolbar(scale: CGFloat) -> some View {
         HStack(spacing: 0) {
+            toolButton("backward.end.fill", help: "上一首") { coordinator.previousTrack() }
+            toolButton(display.isPlaying ? "pause.fill" : "play.fill",
+                       help: display.isPlaying ? "暂停" : "播放") {
+                coordinator.togglePlayPause()
+            }
+            toolButton("forward.end.fill", help: "下一首") { coordinator.nextTrack() }
             toolButton("backward.end.alt", help: "歌词慢 0.5 秒") { coordinator.adjustOffset(-0.5) }
                 .overlay(alignment: .bottomTrailing) { badge("0.5") }
             toolButton("forward.end.alt", help: "歌词快 0.5 秒") { coordinator.adjustOffset(0.5) }

@@ -39,4 +39,25 @@ final class AppleMusicPlayer {
             )
         }.value
     }
+
+    func previousTrack() async -> Bool {
+        await executePlaybackCommand("previous track")
+    }
+
+    func togglePlayPause() async -> Bool {
+        await executePlaybackCommand("playpause")
+    }
+
+    func nextTrack() async -> Bool {
+        await executePlaybackCommand("next track")
+    }
+
+    private func executePlaybackCommand(_ command: String) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            let source = "tell application \"Music\" to \(command)"
+            var error: NSDictionary?
+            NSAppleScript(source: source)?.executeAndReturnError(&error)
+            return error == nil
+        }.value
+    }
 }
