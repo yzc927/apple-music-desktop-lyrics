@@ -69,6 +69,14 @@ public partial class App : System.Windows.Application
         clickThroughItem.Click += (_, _) => Dispatcher.Invoke(() => _window.ToggleClickThrough());
         menu.Items.Add(clickThroughItem);
         menu.Items.Add("重新获取歌词", null, (_, _) => Dispatcher.Invoke(() => _window.RefreshLyrics()));
+        var shareMenu = new Forms.ToolStripMenuItem("歌词分享卡片");
+        shareMenu.DropDownItems.Add("复制当前歌词卡片", null,
+            (_, _) => Dispatcher.Invoke(() => _window.CopyLyricsShareCard()));
+        shareMenu.DropDownItems.Add("选择自定义背景…", null,
+            (_, _) => Dispatcher.Invoke(() => _window.ChooseShareBackground()));
+        shareMenu.DropDownItems.Add("恢复自动背景", null,
+            (_, _) => Dispatcher.Invoke(() => _window.ClearShareBackground()));
+        menu.Items.Add(shareMenu);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出程序", null, (_, _) => Dispatcher.Invoke(() =>
         {

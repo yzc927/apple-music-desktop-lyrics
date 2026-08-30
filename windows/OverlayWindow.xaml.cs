@@ -24,6 +24,7 @@ public partial class OverlayWindow : Window, IDisposable
     private readonly MediaLyricsController _controller;
     private readonly DispatcherTimer _lockedHoverTimer;
     private readonly DispatcherTimer _placementSaveTimer;
+    private readonly DispatcherTimer _burnInTimer;
     private HwndSource? _hwndSource;
     private UnlockWindow? _unlockWindow;
     private DateTimeOffset? _lockedHoverStartedAt;
@@ -45,6 +46,11 @@ public partial class OverlayWindow : Window, IDisposable
     private string _fontFamily = "Microsoft YaHei UI";
     private string _lastArtist = "";
     private bool _hasSavedPlacement;
+    private string? _shareBackgroundPath;
+    private string _lastBurnInLine = "";
+    private DateTimeOffset _lastLineChangedAt = DateTimeOffset.UtcNow;
+    private DateTimeOffset? _pausedAt;
+    private double _lyricsLayerTargetOpacity = 1;
     private static readonly (string Name, string Hex)[] ColorPalette =
     [
         ("珊瑚红", "#FFFF453A"), ("暖橙", "#FFFF9F0A"),
@@ -69,10 +75,16 @@ public partial class OverlayWindow : Window, IDisposable
     public int LyricsCandidateCount => _controller.LyricsCandidateCount;
     public int LyricsCandidateIndex => _controller.LyricsCandidateIndex;
     public string LyricsCandidateLabel => _controller.LyricsCandidateLabel;
+    public string LyricsCandidateConfidence => _controller.LyricsCandidateConfidence;
+    public string LyricsCandidateConfidenceReason => _controller.LyricsCandidateConfidenceReason;
     public bool HasLocalLyricsOverride => _controller.HasLocalLyricsOverride;
     public bool HasCachedLyrics => _controller.HasCachedLyrics;
     public string CurrentLrcText => _controller.CurrentLrcText;
     public TimeSpan CurrentPlaybackPosition => _controller.GetAuthoringPosition();
+    public string PracticeLoopStatus => _controller.PracticeLoopStatus;
+    public double PlaybackRate => _controller.PlaybackRate;
+    public int DifficultSegmentCount => _controller.DifficultSegmentCount;
+    public bool CurrentSegmentIsDifficult => _controller.CurrentSegmentIsDifficult;
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
@@ -87,6 +99,8 @@ public partial class OverlayWindow : Window, IDisposable
         };
         _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
             DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
+        _burnInTimer = new DispatcherTimer(TimeSpan.FromSeconds(1),
+            DispatcherPriority.Background, (_, _) => UpdateBurnInProtection(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
         CurrentRubyHighlightLine.Clip = _rubyHighlightClip;
         CurrentRubyHighlightLine.SizeChanged += (_, _) => UpdateHighlightClip();
@@ -106,6 +120,7 @@ public partial class OverlayWindow : Window, IDisposable
         _controller.SetAutomaticCalibration(_automaticLyricsCalibration, notify: false);
         _controller.SetPresentationState(visible: false, _karaokeMode);
         _controller.Start();
+        _burnInTimer.Start();
     }
 
     private void SchedulePlacementSave()
@@ -190,6 +205,11 @@ public partial class OverlayWindow : Window, IDisposable
             CurrentHighlightLine.Text = current;
             UpdateHighlightMetrics();
             BuildCurrentRuby(current);
+            _lastBurnInLine = current;
+            _lastLineChangedAt = DateTimeOffset.UtcNow;
+            _pausedAt = null;
+            SetLyricsLayerOpacity(1);
+            BurnInShift.X = BurnInShift.Y = 0;
         }
         if (!string.Equals(NextLine.Text, next, StringComparison.Ordinal))
         {
@@ -198,6 +218,69 @@ public partial class OverlayWindow : Window, IDisposable
         }
         _highlightProgress = Math.Clamp(progress, 0, 1);
         UpdateHighlightClip();
+        UpdateSourceBadge();
+    }
+
+    private void UpdateSourceBadge()
+    {
+        var source = _controller.LyricsSource;
+        SourceBadge.ToolTip = source;
+        SourceBadgeText.Text = source switch
+        {
+            var text when text.StartsWith("Apple Music", StringComparison.Ordinal) => "A",
+            var text when text.StartsWith("本地", StringComparison.Ordinal) => "✎",
+            var text when text.Contains("缓存", StringComparison.Ordinal) => "◫",
+            var text when text.Contains("自动对时", StringComparison.Ordinal) => "⟳",
+            var text when text.StartsWith("LRCLIB", StringComparison.Ordinal) => "L",
+            var text when text.StartsWith("歌词不可用", StringComparison.Ordinal) => "!",
+            _ => "…"
+        };
+    }
+
+    private void UpdateBurnInProtection()
+    {
+        if (!IsVisible) return;
+        var now = DateTimeOffset.UtcNow;
+        if (_controller.IsPlaying)
+        {
+            _pausedAt = null;
+        }
+        else
+        {
+            _pausedAt ??= now;
+        }
+
+        var unchangedFor = now - _lastLineChangedAt;
+        var pausedFor = _pausedAt is { } paused ? now - paused : TimeSpan.Zero;
+        var target = Surface.IsMouseOver ? 1d
+            : pausedFor >= TimeSpan.FromSeconds(12) ? 0.35
+            : unchangedFor >= TimeSpan.FromSeconds(90) ? 0.62
+            : 1d;
+        SetLyricsLayerOpacity(target);
+
+        if (target >= 1)
+        {
+            BurnInShift.X = BurnInShift.Y = 0;
+            return;
+        }
+        // Move a few physical pixels every 15 seconds so paused text does not
+        // continuously excite the same OLED subpixels.
+        var phase = (int)(now.ToUnixTimeSeconds() / 15 % 4);
+        (BurnInShift.X, BurnInShift.Y) = phase switch
+        {
+            0 => (-3, -2), 1 => (3, -2), 2 => (3, 2), _ => (-3, 2)
+        };
+    }
+
+    private void SetLyricsLayerOpacity(double target)
+    {
+        if (Math.Abs(_lyricsLayerTargetOpacity - target) < 0.001) return;
+        _lyricsLayerTargetOpacity = target;
+        LyricsLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(
+            LyricsLayer.Opacity, target, TimeSpan.FromMilliseconds(650))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut }
+        });
     }
 
     private void UpdateHighlightMetrics()
@@ -424,6 +507,8 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void LyricsModeButton_Click(object sender, RoutedEventArgs e) => ToggleKaraokeMode();
 
+    private void ShareButton_Click(object sender, RoutedEventArgs e) => CopyLyricsShareCard();
+
     private void SlowButton_Click(object sender, RoutedEventArgs e) => AdjustLyrics(-0.5);
 
     private void FastButton_Click(object sender, RoutedEventArgs e) => AdjustLyrics(0.5);
@@ -450,6 +535,7 @@ public partial class OverlayWindow : Window, IDisposable
         ColorButton.Visibility = unlockedVisibility;
         AutoColorButton.Visibility = unlockedVisibility;
         LyricsModeButton.Visibility = unlockedVisibility;
+        ShareButton.Visibility = unlockedVisibility;
         CloseButton.Visibility = unlockedVisibility;
         LockIcon.Data = Geometry.Parse(_locked
             ? "M7,11 V7 C7,3.7 9.2,1 12,1 C14.8,1 17,3.7 17,7 V11 M5,11 H19 V22 H5 Z M12,15 V18"
@@ -629,9 +715,63 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void ClearLyricsCache() => _controller.ClearLyricsCache();
 
+    public void ToggleCurrentLineLoop() => _controller.ToggleCurrentLineLoop();
+
+    public void SetPracticePointA() => _controller.SetPracticePointA();
+
+    public void SetPracticePointB() => _controller.SetPracticePointB();
+
+    public void ClearPracticeLoop() => _controller.ClearPracticeLoop();
+
+    public Task CyclePlaybackRateAsync() => _controller.CyclePlaybackRateAsync();
+
+    public void ToggleCurrentDifficultSegment() => _controller.ToggleCurrentDifficultSegment();
+
     public void RefreshArtistColor()
     {
         if (_autoColor) ApplyAutomaticColor(_lastArtist);
+    }
+
+    public void CopyLyricsShareCard()
+    {
+        if (string.IsNullOrWhiteSpace(_controller.CurrentTitle))
+        {
+            ShowToast("当前没有可分享的歌曲");
+            return;
+        }
+        try
+        {
+            var palette = ArtistColorEngine.Resolve(_lastArtist, _highlightColor.ToString()).Colors;
+            var card = LyricsShareCardRenderer.Render(_controller.CurrentTitle, _lastArtist,
+                _controller.CurrentAlbum, CurrentLine.Text, _controller.CurrentArtwork,
+                _shareBackgroundPath, palette);
+            System.Windows.Clipboard.SetImage(card);
+            ShowToast("歌词卡片已复制到剪贴板");
+        }
+        catch (Exception error)
+        {
+            ShowToast("生成歌词卡片失败：" + error.Message);
+        }
+    }
+
+    public void ChooseShareBackground()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择歌词卡片背景",
+            Filter = "图片文件|*.jpg;*.jpeg;*.png;*.webp;*.bmp"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        _shareBackgroundPath = dialog.FileName;
+        SaveSettings();
+        ShowToast("已设置歌词卡片背景");
+    }
+
+    public void ClearShareBackground()
+    {
+        _shareBackgroundPath = null;
+        SaveSettings();
+        ShowToast("歌词卡片已恢复自动背景");
     }
 
     public void ToggleAutomaticLyricsCalibration()
@@ -714,6 +854,7 @@ public partial class OverlayWindow : Window, IDisposable
             _autoColor = settings.AutoColor;
             _automaticLyricsCalibration = settings.AutomaticLyricsCalibration;
             _karaokeMode = settings.KaraokeMode;
+            _shareBackgroundPath = settings.ShareBackgroundPath;
             _locked = settings.Locked;
             Topmost = settings.AlwaysOnTop;
             _clickThrough = settings.ClickThrough;
@@ -765,7 +906,7 @@ public partial class OverlayWindow : Window, IDisposable
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
                     _fontFamily, _locked, Topmost, _clickThrough, _automaticLyricsCalibration,
-                    _karaokeMode));
+                    _karaokeMode, _shareBackgroundPath));
             var temporaryPath = _settingsPath + ".tmp";
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, _settingsPath, true);
@@ -778,7 +919,7 @@ public partial class OverlayWindow : Window, IDisposable
         string? FontFamily = null, bool Locked = false, bool AlwaysOnTop = true,
         bool ClickThrough = false,
         bool AutomaticLyricsCalibration = ReleaseDefaults.AutomaticLyricsCalibration,
-        bool KaraokeMode = false);
+        bool KaraokeMode = false, string? ShareBackgroundPath = null);
 
     public void ToggleClickThrough()
     {
@@ -850,6 +991,7 @@ public partial class OverlayWindow : Window, IDisposable
         SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
+        _burnInTimer.Stop();
         _hwndSource?.RemoveHook(WindowMessageHook);
         _hwndSource = null;
         _unlockWindow?.Close();

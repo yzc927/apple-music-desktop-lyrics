@@ -258,6 +258,9 @@
                                     </WrapPanel>
                                     <TextBlock x:Name="LyricsVersionText" Margin="0,7,0,0"
                                                TextWrapping="Wrap" Foreground="#FF6F7684" />
+                                    <TextBlock x:Name="LyricsConfidenceText" Margin="0,5,0,0"
+                                               FontWeight="SemiBold" TextWrapping="Wrap"
+                                               Text="匹配置信度：尚未评估" />
                                     <Button x:Name="AutoTimingButton" Margin="0,14,0,0"
                                             HorizontalAlignment="Left" Click="AutoTimingButton_Click" />
                                     <TextBlock Text="默认开启；以 Apple Music 当前高亮歌词校准 LRCLIB 时间。"

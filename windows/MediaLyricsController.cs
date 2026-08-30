@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows.Threading;
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 
 namespace AppleMusicDesktopLyrics;
 
@@ -15,9 +16,13 @@ internal sealed class MediaLyricsController : IDisposable
     private readonly SongOffsetStore _offsetStore = new();
     private readonly SongLyricsChoiceStore _choiceStore = new();
     private readonly LocalLyricsStore _localLyrics = new();
+    private readonly SongTransitionStore _transitionStore = new();
+    private readonly PracticeMarkerStore _practiceMarkers = new();
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _pollTimer;
     private readonly DispatcherTimer _applePollTimer;
+    private readonly DispatcherTimer _unavailableHideTimer;
+    private readonly DispatcherTimer _practiceTimer;
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
     private IReadOnlyList<LyricLine> _lines = [];
@@ -25,6 +30,9 @@ internal sealed class MediaLyricsController : IDisposable
     private int _candidateIndex = -1;
     private string _mediaKey = "";
     private string _title = "";
+    private string _album = "";
+    private TimeSpan _duration;
+    private byte[]? _artworkBytes;
     private TimeSpan _clockPosition;
     private long _clockUpdatedTicks;
     private TimeSpan _clockCorrection;
@@ -39,6 +47,8 @@ internal sealed class MediaLyricsController : IDisposable
     private double _secondsPerVocalUnit = 0.28;
     private int _lastRenderedIndex = -1;
     private CancellationTokenSource _lyricsCts = new();
+    private readonly CancellationTokenSource _preloadCts = new();
+    private readonly HashSet<string> _preloadAttempted = new(StringComparer.Ordinal);
     private bool _usingAppleLyrics;
     private bool _appleFallbackUnavailable;
     private bool _applePolling;
@@ -66,6 +76,13 @@ internal sealed class MediaLyricsController : IDisposable
     private long _lastLineAdvancedTicks = Stopwatch.GetTimestamp();
     private long _nextAppleReadTicks;
     private long _uiPlaybackEvidenceUntilTicks;
+    private string _unavailableMediaKey = "";
+    private TimeSpan? _practiceLoopStart;
+    private TimeSpan? _practiceLoopEnd;
+    private TimeSpan? _practicePointA;
+    private bool _practiceLineLoop;
+    private bool _practiceSeeking;
+    private double _playbackRate = 1;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
@@ -82,6 +99,12 @@ internal sealed class MediaLyricsController : IDisposable
         // exposed, so use a conservative base cadence and back off on failures.
         _applePollTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
             async (_, _) => await PollAppleLyricsAsync(), Dispatcher.CurrentDispatcher);
+        _unavailableHideTimer = new DispatcherTimer(TimeSpan.FromSeconds(4),
+            DispatcherPriority.Background, (_, _) => HideUnavailableLyrics(),
+            Dispatcher.CurrentDispatcher);
+        _practiceTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(120),
+            DispatcherPriority.Background, async (_, _) => await CheckPracticeLoopAsync(),
+            Dispatcher.CurrentDispatcher);
     }
 
     public double OffsetSeconds => _lyricsOffset.TotalSeconds;
@@ -91,6 +114,12 @@ internal sealed class MediaLyricsController : IDisposable
     public string LyricsCandidateLabel => _candidateIndex >= 0 && _candidateIndex < _candidates.Count
         ? _candidates[_candidateIndex].Label
         : "自动匹配";
+    public string LyricsCandidateConfidence => _candidateIndex >= 0 && _candidateIndex < _candidates.Count
+        ? _candidates[_candidateIndex].Match.Label
+        : "尚未评估";
+    public string LyricsCandidateConfidenceReason => _candidateIndex >= 0 && _candidateIndex < _candidates.Count
+        ? _candidates[_candidateIndex].Match.Reason
+        : "当前没有 LRCLIB 候选歌词";
     public string LyricsSource => _usingAppleLyrics
         ? "Apple Music 官方歌词（后备）"
         : _lyricsLoadKind switch
@@ -107,6 +136,16 @@ internal sealed class MediaLyricsController : IDisposable
     public bool HasCachedLyrics => _localLyrics.HasCache(_mediaKey);
     public string CurrentLrcText => _lines.Count == 0 ? "" : LrcParser.Serialize(_lines);
     public bool IsPlaying => _playing;
+    public string CurrentTitle => _title;
+    public string CurrentAlbum => _album;
+    public byte[]? CurrentArtwork => _artworkBytes;
+    public string PracticeLoopStatus => _practiceLineLoop ? "当前句循环"
+        : _practiceLoopStart is not null && _practiceLoopEnd is not null ? "A/B 循环"
+        : _practicePointA is not null ? "已设置 A 点，等待 B 点" : "循环已关闭";
+    public double PlaybackRate => _playbackRate;
+    public int DifficultSegmentCount => _practiceMarkers.Count(_mediaKey);
+    public bool CurrentSegmentIsDifficult => TryGetCurrentLine(out var line)
+        && _practiceMarkers.IsMarked(_mediaKey, line.Time);
 
     public async Task<bool> PreviousTrackAsync() => await RunPlaybackCommandAsync(
         session => session.TrySkipPreviousAsync(), "无法切换到上一首");
@@ -147,6 +186,7 @@ internal sealed class MediaLyricsController : IDisposable
             _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             _pollTimer.Start();
             _applePollTimer.Start();
+            _practiceTimer.Start();
             await PollAsync();
         }
         catch (Exception ex)
@@ -164,6 +204,8 @@ internal sealed class MediaLyricsController : IDisposable
             _session = FindAppleMusicSession(_manager);
             if (_session is null)
             {
+                _unavailableHideTimer.Stop();
+                _unavailableMediaKey = "";
                 _playing = false;
                 UpdateRenderScheduling();
                 _render("正在等待 Apple Music…", "请先在 Apple Music 中播放一首歌曲", 0, "");
@@ -199,10 +241,21 @@ internal sealed class MediaLyricsController : IDisposable
             _playing = playing;
             UpdateRenderScheduling(renderImmediately: playbackStateChanged);
             if (!mediaChanged) return;
+            _unavailableHideTimer.Stop();
+            _unavailableMediaKey = "";
+            var previousMediaKey = _mediaKey;
             _mediaKey = key;
+            ClearPracticeLoop(notify: false);
             _lyricsOffset = _offsetStore.Get(_mediaKey);
             _title = media.Title;
             _artist = media.Artist;
+            _album = media.AlbumTitle;
+            _duration = timeline.EndTime;
+            _artworkBytes = null;
+            _ = LoadArtworkAsync(media.Thumbnail, _mediaKey);
+            if (!string.IsNullOrWhiteSpace(previousMediaKey))
+                _transitionStore.Learn(previousMediaKey, new NextTrackMetadata(
+                    _mediaKey, _title, _artist, _album, _duration.TotalSeconds));
             _lines = [];
             _candidates = [];
             _candidateIndex = -1;
@@ -216,6 +269,7 @@ internal sealed class MediaLyricsController : IDisposable
             _nextAppleReadTicks = 0;
             ResetTimingState();
             _render(media.Title, $"{media.Artist} · 正在读取 Apple Music 歌词…", 0, _artist);
+            _ = PreloadLearnedNextAsync(_mediaKey);
             await LoadLyricsAsync(media.Title, media.Artist, media.AlbumTitle, timeline.EndTime);
         }
         catch (Exception ex)
@@ -263,11 +317,16 @@ internal sealed class MediaLyricsController : IDisposable
             if (_candidates.Count > 0)
             {
                 var remembered = _choiceStore.Get(_mediaKey);
-                _candidateIndex = remembered is null
-                    ? 0
-                    : Math.Max(0, _candidates.ToList().FindIndex(item => item.Key == remembered));
-                ApplyCandidate(_candidateIndex, remember: false);
-                return;
+                var rememberedIndex = remembered is null
+                    ? -1
+                    : _candidates.ToList().FindIndex(item => item.Key == remembered);
+                _candidateIndex = Math.Max(0, rememberedIndex);
+                if (rememberedIndex >= 0 ||
+                    _candidates[_candidateIndex].Match.Confidence != LyricsMatchConfidence.Low)
+                {
+                    ApplyCandidate(_candidateIndex, remember: false);
+                    return;
+                }
             }
 
             var cached = _localLyrics.GetCache(_mediaKey);
@@ -305,6 +364,186 @@ internal sealed class MediaLyricsController : IDisposable
     {
         Render();
         UpdateRenderScheduling();
+    }
+
+    private async Task PreloadLearnedNextAsync(string currentKey)
+    {
+        var next = _transitionStore.GetNext(currentKey);
+        if (next is null || _localLyrics.GetCache(next.Key) is not null ||
+            !_preloadAttempted.Add(next.Key)) return;
+        try
+        {
+            var result = await _lyricsClient.SearchAsync(next.Title, next.Artist, next.Album,
+                TimeSpan.FromSeconds(next.DurationSeconds), _preloadCts.Token);
+            var candidate = result.Candidates.FirstOrDefault();
+            if (candidate is null) return;
+            _localLyrics.SetCache(next.Key, LrcParser.Serialize(candidate.Lines),
+                "预加载 · " + candidate.Label);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* Preloading is opportunistic and must never affect current lyrics. */ }
+    }
+
+    public void ToggleCurrentLineLoop()
+    {
+        if (_practiceLineLoop)
+        {
+            ClearPracticeLoop();
+            return;
+        }
+        if (!TryGetCurrentLine(out var line, out var index))
+        {
+            _notify("当前还没有可循环的歌词行");
+            return;
+        }
+        var end = index + 1 < _lines.Count ? _lines[index + 1].Time
+            : line.ExplicitEndTime ?? line.Time + TimeSpan.FromSeconds(4);
+        _practiceLoopStart = ToRawPlaybackPosition(line.Time);
+        _practiceLoopEnd = ToRawPlaybackPosition(end);
+        _practicePointA = null;
+        _practiceLineLoop = true;
+        _notify("已开启当前句循环");
+    }
+
+    public void SetPracticePointA()
+    {
+        _practicePointA = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        _practiceLoopStart = _practicePointA;
+        _practiceLoopEnd = null;
+        _practiceLineLoop = false;
+        _notify("已设置 A 点 " + FormatPracticeTime(_practicePointA.Value));
+    }
+
+    public void SetPracticePointB()
+    {
+        if (_practicePointA is null)
+        {
+            _notify("请先设置 A 点");
+            return;
+        }
+        var pointB = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        if (pointB - _practicePointA.Value < TimeSpan.FromMilliseconds(500))
+        {
+            _notify("B 点必须比 A 点至少晚 0.5 秒");
+            return;
+        }
+        _practiceLoopStart = _practicePointA;
+        _practiceLoopEnd = pointB;
+        _practiceLineLoop = false;
+        _notify($"已开启 A/B 循环 {FormatPracticeTime(_practicePointA.Value)}–{FormatPracticeTime(pointB)}");
+    }
+
+    public void ClearPracticeLoop(bool notify = true)
+    {
+        _practiceLoopStart = null;
+        _practiceLoopEnd = null;
+        _practicePointA = null;
+        _practiceLineLoop = false;
+        if (notify) _notify("练习循环已关闭");
+    }
+
+    public async Task CyclePlaybackRateAsync()
+    {
+        var rates = new[] { 0.75, 0.90, 1.0, 1.15 };
+        var next = rates.FirstOrDefault(rate => rate > _playbackRate + 0.01);
+        if (next <= 0) next = rates[0];
+        if (_session is null)
+        {
+            _notify("当前没有 Apple Music 媒体会话");
+            return;
+        }
+        try
+        {
+            if (!await _session.TryChangePlaybackRateAsync(next))
+            {
+                _notify("Apple Music 当前版本不接受系统变速控制");
+                return;
+            }
+            _playbackRate = next;
+            _notify($"练习速度已切换为 {_playbackRate:0.##}×");
+        }
+        catch (Exception error) { _notify("无法调整播放速度：" + error.Message); }
+    }
+
+    public void ToggleCurrentDifficultSegment()
+    {
+        if (!TryGetCurrentLine(out var line))
+        {
+            _notify("当前还没有可标记的歌词行");
+            return;
+        }
+        var marked = _practiceMarkers.Toggle(_mediaKey, line.Time,
+            LyricTiming.DisplayText(line.Text));
+        _notify(marked ? "已标记为练习难点" : "已取消难点标记");
+    }
+
+    private bool TryGetCurrentLine(out LyricLine line) => TryGetCurrentLine(out line, out _);
+
+    private bool TryGetCurrentLine(out LyricLine line, out int index)
+    {
+        index = _lines.Count == 0 ? -1 : LyricTiming.ActiveLineIndex(_lines, EffectivePosition());
+        if (index < 0 || index >= _lines.Count)
+        {
+            line = default!;
+            return false;
+        }
+        line = _lines[index];
+        return true;
+    }
+
+    private TimeSpan ToRawPlaybackPosition(TimeSpan lyricPosition) => TimeSpan.FromTicks(Math.Max(0,
+        (lyricPosition - _lyricsOffset - _automaticOffset).Ticks));
+
+    private static string FormatPracticeTime(TimeSpan value) =>
+        $"{(int)value.TotalMinutes}:{value.Seconds:00}.{value.Milliseconds / 100}";
+
+    private async Task CheckPracticeLoopAsync()
+    {
+        if (_practiceSeeking || !_playing || _session is null ||
+            _practiceLoopStart is not { } start || _practiceLoopEnd is not { } end) return;
+        var position = AdvancePlaybackClock(Stopwatch.GetTimestamp());
+        if (position < end) return;
+        _practiceSeeking = true;
+        try
+        {
+            if (!await _session.TryChangePlaybackPositionAsync(start.Ticks))
+            {
+                ClearPracticeLoop(notify: false);
+                _notify("Apple Music 不接受循环回跳，已关闭练习循环");
+                return;
+            }
+            _clockPosition = start;
+            _clockUpdatedTicks = Stopwatch.GetTimestamp();
+            _clockCorrection = TimeSpan.Zero;
+            _lastRenderedIndex = -1;
+            _lastProgressIndex = -1;
+            _lastProgress = 0;
+        }
+        catch
+        {
+            ClearPracticeLoop(notify: false);
+            _notify("循环回跳失败，已关闭练习循环");
+        }
+        finally { _practiceSeeking = false; }
+    }
+
+    private async Task LoadArtworkAsync(IRandomAccessStreamReference? reference, string mediaKey)
+    {
+        if (reference is null) return;
+        try
+        {
+            using var stream = await reference.OpenReadAsync();
+            if (stream.Size is 0 or > 20 * 1024 * 1024) return;
+            using var input = stream.GetInputStreamAt(0);
+            using var reader = new DataReader(input);
+            var loaded = await reader.LoadAsync((uint)stream.Size);
+            if (loaded != stream.Size) return;
+            var bytes = new byte[loaded];
+            reader.ReadBytes(bytes);
+            if (string.Equals(mediaKey, _mediaKey, StringComparison.Ordinal))
+                _artworkBytes = bytes;
+        }
+        catch { /* Artwork is optional; lyrics and sharing still use a gradient. */ }
     }
 
     private void UpdateRenderScheduling(bool renderImmediately = false)
@@ -794,6 +1033,22 @@ internal sealed class MediaLyricsController : IDisposable
         _render(string.IsNullOrWhiteSpace(_title) ? "未找到歌词" : _title,
             $"{reason}。可在管理器中导入本地 LRC，或稍后点击“重新获取歌词”重试。",
             0, _artist);
+        // Let the user see why this track has no lyrics, then leave an
+        // instrumental track unobtrusive.  The media-key guard prevents a timer
+        // started by the previous song from clearing the next song's loading or
+        // lyric text.
+        _unavailableMediaKey = _mediaKey;
+        _unavailableHideTimer.Stop();
+        _unavailableHideTimer.Start();
+    }
+
+    private void HideUnavailableLyrics()
+    {
+        _unavailableHideTimer.Stop();
+        if (_lyricsLoadKind != LyricsLoadKind.Unavailable ||
+            string.IsNullOrWhiteSpace(_unavailableMediaKey) ||
+            !string.Equals(_unavailableMediaKey, _mediaKey, StringComparison.Ordinal)) return;
+        _render("", "", 0, _artist);
     }
 
     public bool SetLocalLyrics(string lrc, string label, out string error)
@@ -903,7 +1158,11 @@ internal sealed class MediaLyricsController : IDisposable
         _pollTimer.Stop();
         _renderTimer.Stop();
         _applePollTimer.Stop();
+        _unavailableHideTimer.Stop();
+        _practiceTimer.Stop();
         _lyricsCts.Cancel();
         _lyricsCts.Dispose();
+        _preloadCts.Cancel();
+        _preloadCts.Dispose();
     }
 }

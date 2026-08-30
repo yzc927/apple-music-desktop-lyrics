@@ -19,7 +19,10 @@
             <Border x:Name="HoverBackdrop" CornerRadius="14" Background="Transparent"
                     VerticalAlignment="Center" Height="72" IsHitTestVisible="False" />
 
-            <StackPanel Margin="24,24,24,10" VerticalAlignment="Center">
+            <StackPanel x:Name="LyricsLayer" Margin="24,24,24,10" VerticalAlignment="Center">
+                <StackPanel.RenderTransform>
+                    <TranslateTransform x:Name="BurnInShift" />
+                </StackPanel.RenderTransform>
                 <Grid x:Name="CurrentRubyGrid" Height="18" Margin="0,0,0,-1"
                       Visibility="Collapsed" IsHitTestVisible="False">
                     <StackPanel x:Name="CurrentRubyLine" Orientation="Horizontal"
@@ -52,6 +55,13 @@
                     </TextBlock.Effect>
                 </TextBlock>
             </StackPanel>
+
+            <Border x:Name="SourceBadge" HorizontalAlignment="Right" VerticalAlignment="Center"
+                    Margin="0,0,9,0" Padding="5,2" CornerRadius="7" Background="#70000000"
+                    Opacity="0.78" Panel.ZIndex="12" IsHitTestVisible="True" ToolTip="正在获取歌词">
+                <TextBlock x:Name="SourceBadgeText" Text="…" Foreground="#DFFFFFFF"
+                           FontFamily="Segoe UI" FontSize="10" FontWeight="SemiBold" />
+            </Border>
 
             <Border x:Name="Toast" Visibility="Collapsed" Opacity="0"
                     HorizontalAlignment="Center" VerticalAlignment="Top"
@@ -139,6 +149,13 @@
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                               StrokeLineJoin="Round" Fill="Transparent"
                               Data="M4,6 H20 M4,12 H20 M4,18 H15" />
+                    </Viewbox>
+                </Button>
+                <Button x:Name="ShareButton" ToolTip="生成歌词卡片并复制到剪贴板" Click="ShareButton_Click">
+                    <Viewbox Width="17" Height="17">
+                        <Path Stroke="White" StrokeThickness="2" Fill="Transparent"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                              Data="M8,12 L16,5 M11,5 H16 V10 M18,12 V20 H4 V6 H9" />
                     </Viewbox>
                 </Button>
                 <Button x:Name="CloseButton" ToolTip="隐藏到系统托盘" Click="CloseButton_Click">

@@ -81,4 +81,21 @@ Equal(TimeSpan.FromSeconds(60),
     AppleUiPollingPolicy.NextDelay(false, 20, TimeSpan.FromMilliseconds(100)),
     "failed UI Automation read backoff is capped");
 
+Equal("River Flows In You", SongMetadataNormalizer.CleanTitle(
+    "River Flows In You (Remastered 2024)"), "remaster suffix is removed");
+Equal("unravel", SongMetadataNormalizer.CleanTitle(
+    "unravel【动画版 TV Size】"), "anime version suffix is removed");
+Equal("打上花火", SongMetadataNormalizer.CleanTitle(
+    "打上花火 feat. 米津玄師"), "featured artist suffix is removed");
+Equal(true, SongMetadataNormalizer.VariantMismatchPenalty(
+    "Song (Live)", "Song") > 0, "live studio mismatch is penalized");
+Equal(0d, SongMetadataNormalizer.VariantMismatchPenalty(
+    "Song (Live)", "Song - Live"), "matching live variants are not penalized");
+Equal(LyricsMatchConfidence.High, LyricsMatchConfidenceEvaluator.Evaluate(
+    1, 1, 0.4, 0, true).Confidence, "exact candidate has high confidence");
+Equal(LyricsMatchConfidence.Medium, LyricsMatchConfidenceEvaluator.Evaluate(
+    1, 1, 0.4, 34, true).Confidence, "version mismatch needs review");
+Equal("时长不符（相差 8.0 秒）", LyricsMatchConfidenceEvaluator.Evaluate(
+    1, 1, 8, 0, true).Reason, "duration mismatch is explained");
+
 Console.WriteLine("Windows core tests passed.");

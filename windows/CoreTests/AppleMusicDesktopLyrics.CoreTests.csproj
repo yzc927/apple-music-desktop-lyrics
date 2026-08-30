@@ -15,5 +15,7 @@
     <Compile Include="..\ReleaseDefaults.cs" Link="ReleaseDefaults.cs" />
     <Compile Include="..\ReleaseSelfTest.cs" Link="ReleaseSelfTest.cs" />
     <Compile Include="..\SingleInstanceCoordinator.cs" Link="SingleInstanceCoordinator.cs" />
+    <Compile Include="..\SongMetadataNormalizer.cs" Link="SongMetadataNormalizer.cs" />
+    <Compile Include="..\LyricsMatchConfidence.cs" Link="LyricsMatchConfidence.cs" />
   </ItemGroup>
 </Project>

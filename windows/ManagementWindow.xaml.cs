@@ -60,6 +60,16 @@ public partial class ManagementWindow : Window
         LyricsVersionText.Text = _overlay.LyricsCandidateCount > 0
             ? $"{_overlay.LyricsCandidateIndex + 1}/{_overlay.LyricsCandidateCount} · {_overlay.LyricsCandidateLabel}"
             : "当前没有可切换的 LRCLIB 版本";
+        LyricsConfidenceText.Text = _overlay.LyricsCandidateCount > 0
+            ? $"{_overlay.LyricsCandidateConfidence} · {_overlay.LyricsCandidateConfidenceReason}"
+            : "匹配置信度：尚未评估";
+        LyricsConfidenceText.Foreground = _overlay.LyricsCandidateConfidence switch
+        {
+            "高度匹配" => new SolidColorBrush(System.Windows.Media.Color.FromRgb(38, 145, 92)),
+            "可能是其他版本" => new SolidColorBrush(System.Windows.Media.Color.FromRgb(190, 120, 24)),
+            "低置信度" => new SolidColorBrush(System.Windows.Media.Color.FromRgb(205, 67, 67)),
+            _ => new SolidColorBrush(System.Windows.Media.Color.FromRgb(111, 118, 132))
+        };
         AutoModeButton.Content = _overlay.IsAutoColor ? "关闭自动配色" : "开启自动配色";
         AutoTimingButton.Content = _overlay.IsAutomaticLyricsCalibration
             ? "关闭 Apple 自动对时" : "开启 Apple 自动对时";

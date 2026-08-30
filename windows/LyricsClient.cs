@@ -8,7 +8,8 @@ using System.Reflection;
 namespace AppleMusicDesktopLyrics;
 
 internal sealed record LyricsCandidate(
-    string Key, string Label, IReadOnlyList<LyricLine> Lines, double Score);
+    string Key, string Label, IReadOnlyList<LyricLine> Lines, double Score,
+    LyricsMatchAssessment Match);
 
 internal sealed record LyricsSearchResult(IReadOnlyList<LyricsCandidate> Candidates)
 {
@@ -38,8 +39,8 @@ internal sealed partial class LyricsClient
     public async Task<LyricsSearchResult> SearchAsync(
         string title, string artist, string album, TimeSpan duration, CancellationToken cancellationToken)
     {
-        var cleanTitle = CleanTitle(title);
-        var cleanArtist = CleanArtist(artist);
+        var cleanTitle = SongMetadataNormalizer.CleanTitle(title);
+        var cleanArtist = SongMetadataNormalizer.CleanArtist(artist);
         var exactQuery = $"api/search?track_name={Uri.EscapeDataString(cleanTitle)}" +
                          $"&artist_name={Uri.EscapeDataString(cleanArtist)}";
         // Always collect title-only alternatives. They are useful when Apple Music
@@ -90,30 +91,40 @@ internal sealed partial class LyricsClient
         var allowedDurationDifference = Math.Max(10, duration.TotalSeconds * 0.045);
         if (duration.TotalSeconds > 0 && durationDifference > allowedDurationDifference) return null;
 
-        var titleMatch = TextMatch(item.TrackName, CleanTitle(title));
-        var artistMatch = ArtistMatch(item.ArtistName, CleanArtist(artist));
+        var titleMatch = TextMatch(item.TrackName, SongMetadataNormalizer.CleanTitle(title));
+        var artistMatch = ArtistMatch(item.ArtistName, SongMetadataNormalizer.CleanArtist(artist));
         if (titleMatch < 0.72) return null;
         if (!exactArtistQuery && artistMatch < 0.45 && durationDifference > 2.5) return null;
 
-        var score = Score(item, title, artist, album, duration, titleMatch, artistMatch);
+        var variantPenalty = SongMetadataNormalizer.VariantMismatchPenalty(title, item.TrackName);
+        var score = Score(item, title, artist, album, duration, titleMatch, artistMatch,
+            variantPenalty);
+        var assessment = LyricsMatchConfidenceEvaluator.Evaluate(titleMatch, artistMatch,
+            durationDifference, variantPenalty, item.Duration is not null && duration.TotalSeconds > 0);
         var durationLabel = item.Duration is { } seconds
             ? TimeSpan.FromSeconds(seconds).ToString(@"m\:ss")
             : "时长未知";
         var albumLabel = string.IsNullOrWhiteSpace(item.AlbumName) ? "" : $" · {item.AlbumName}";
         return new LyricsCandidate(
-            CandidateKey(item), $"{item.ArtistName}{albumLabel} · {durationLabel}", lines, score);
+            CandidateKey(item), $"{item.ArtistName}{albumLabel} · {durationLabel}", lines, score,
+            assessment);
     }
 
     private static double Score(
         LyricsResult item, string title, string artist, string album, TimeSpan duration,
-        double? knownTitleMatch = null, double? knownArtistMatch = null)
+        double? knownTitleMatch = null, double? knownArtistMatch = null,
+        double? knownVariantPenalty = null)
     {
         var durationDifference = DurationDifference(item.Duration, duration.TotalSeconds);
         var score = durationDifference * 3;
-        score += (1 - (knownTitleMatch ?? TextMatch(item.TrackName, CleanTitle(title)))) * 180;
-        score += (1 - (knownArtistMatch ?? ArtistMatch(item.ArtistName, CleanArtist(artist)))) * 110;
+        score += (1 - (knownTitleMatch ?? TextMatch(item.TrackName,
+            SongMetadataNormalizer.CleanTitle(title)))) * 180;
+        score += (1 - (knownArtistMatch ?? ArtistMatch(item.ArtistName,
+            SongMetadataNormalizer.CleanArtist(artist)))) * 110;
         if (!string.IsNullOrWhiteSpace(album))
             score += (1 - TextMatch(item.AlbumName, album)) * 16;
+        score += knownVariantPenalty ??
+            SongMetadataNormalizer.VariantMismatchPenalty(title, item.TrackName);
         if (item.Duration is null) score += 80;
         return score;
     }
@@ -181,23 +192,6 @@ internal sealed partial class LyricsClient
             if (Rune.IsLetterOrDigit(rune)) builder.Append(rune.ToString().ToLowerInvariant());
         return builder.ToString();
     }
-
-    private static string CleanTitle(string title) =>
-        TitleDecorationRegex().Replace(title, "").Trim();
-
-    private static string CleanArtist(string artist)
-    {
-        foreach (var separator in new[] { " — ", " – ", " - " })
-        {
-            var index = artist.IndexOf(separator, StringComparison.Ordinal);
-            if (index > 0) return artist[..index].Trim();
-        }
-        return artist.Trim();
-    }
-
-    [GeneratedRegex(@"\s*[\(\[].*?(remaster(?:ed)?|live|version|edit).*?[\)\]]",
-        RegexOptions.IgnoreCase)]
-    private static partial Regex TitleDecorationRegex();
 
     private sealed record LyricsResult(
         [property: JsonPropertyName("id")] long? Id,
