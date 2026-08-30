@@ -289,6 +289,27 @@
                                 </StackPanel>
                             </Grid>
                         </Border>
+
+                        <Border Margin="0,12,0,0" Padding="18" Style="{StaticResource CardBorderStyle}">
+                            <StackPanel>
+                                <TextBlock Text="跟唱练习模式" FontWeight="SemiBold" FontSize="15" />
+                                <TextBlock Text="循环当前歌词行，或设置任意 A/B 区间；难点标记会永久保存在本机。"
+                                           Margin="0,5,0,0" TextWrapping="Wrap" Foreground="#FF6F7684" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button x:Name="LineLoopButton" Content="循环当前句" Margin="0,0,8,8"
+                                            Click="LineLoopButton_Click" />
+                                    <Button Content="设置 A 点" Margin="0,0,8,8" Click="PracticePointA_Click" />
+                                    <Button Content="设置 B 点" Margin="0,0,8,8" Click="PracticePointB_Click" />
+                                    <Button Content="关闭循环" Margin="0,0,8,8" Click="ClearPracticeLoop_Click" />
+                                    <Button x:Name="PlaybackRateButton" Content="速度 1×" Margin="0,0,8,8"
+                                            Click="PlaybackRateButton_Click" />
+                                    <Button x:Name="DifficultSegmentButton" Content="标记当前句为难点"
+                                            Margin="0,0,8,8" Click="DifficultSegmentButton_Click" />
+                                </WrapPanel>
+                                <TextBlock x:Name="PracticeStatusText" Margin="0,3,0,0"
+                                           TextWrapping="Wrap" Foreground="#FF6F7684" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

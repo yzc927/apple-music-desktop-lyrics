@@ -90,6 +90,13 @@ public partial class ManagementWindow : Window
         LocalLyricsStatusText.Text = _overlay.HasLocalLyricsOverride
             ? "当前歌曲正在使用本地永久覆盖。"
             : _overlay.HasCachedLyrics ? "当前歌曲已有 LRCLIB 离线缓存。" : "当前歌曲尚无本地覆盖或缓存。";
+        LineLoopButton.Content = _overlay.PracticeLoopStatus == "当前句循环"
+            ? "关闭当前句循环" : "循环当前句";
+        PlaybackRateButton.Content = $"速度 {_overlay.PlaybackRate:0.##}×";
+        DifficultSegmentButton.Content = _overlay.CurrentSegmentIsDifficult
+            ? "取消当前句难点" : "标记当前句为难点";
+        PracticeStatusText.Text = $"{_overlay.PracticeLoopStatus} · " +
+            $"本曲已记录 {_overlay.DifficultSegmentCount} 个难点";
         CurrentPalettePreview.Background = CreateBrush(
             ArtistColorEngine.Resolve(artist, _overlay.FallbackHighlightColor).Colors);
     }
@@ -350,6 +357,12 @@ public partial class ManagementWindow : Window
     private void NextLyrics_Click(object sender, RoutedEventArgs e) { _overlay.ChangeLyricsCandidate(1); RefreshState(); }
     private void AutoTimingButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleAutomaticLyricsCalibration(); RefreshState(); }
     private void KaraokeModeButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleKaraokeMode(); RefreshState(); }
+    private void LineLoopButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleCurrentLineLoop(); RefreshState(); }
+    private void PracticePointA_Click(object sender, RoutedEventArgs e) { _overlay.SetPracticePointA(); RefreshState(); }
+    private void PracticePointB_Click(object sender, RoutedEventArgs e) { _overlay.SetPracticePointB(); RefreshState(); }
+    private void ClearPracticeLoop_Click(object sender, RoutedEventArgs e) { _overlay.ClearPracticeLoop(); RefreshState(); }
+    private async void PlaybackRateButton_Click(object sender, RoutedEventArgs e) { await _overlay.CyclePlaybackRateAsync(); RefreshState(); }
+    private void DifficultSegmentButton_Click(object sender, RoutedEventArgs e) { _overlay.ToggleCurrentDifficultSegment(); RefreshState(); }
 
     private void StartupCheckBox_Changed(object sender, RoutedEventArgs e)
     {

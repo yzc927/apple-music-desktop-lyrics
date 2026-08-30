@@ -83,6 +83,7 @@ internal sealed class MediaLyricsController : IDisposable
     private bool _practiceLineLoop;
     private bool _practiceSeeking;
     private double _playbackRate = 1;
+    private long _practiceSeekGraceUntilTicks;
 
     public MediaLyricsController(Action<string, string, double, string> render, Action<string> notify)
     {
@@ -514,6 +515,8 @@ internal sealed class MediaLyricsController : IDisposable
             }
             _clockPosition = start;
             _clockUpdatedTicks = Stopwatch.GetTimestamp();
+            _practiceSeekGraceUntilTicks = _clockUpdatedTicks +
+                (long)(Stopwatch.Frequency * 1.5);
             _clockCorrection = TimeSpan.Zero;
             _lastRenderedIndex = -1;
             _lastProgressIndex = -1;
@@ -928,6 +931,8 @@ internal sealed class MediaLyricsController : IDisposable
 
         var predicted = AdvancePlaybackClock(monotonicNow);
         var error = sample - predicted;
+        if (monotonicNow < _practiceSeekGraceUntilTicks && Math.Abs(error.TotalSeconds) >= 1.75)
+            return;
         if (Math.Abs(error.TotalSeconds) >= 1.75)
         {
             // A large discontinuity is a real seek or track restart.
@@ -971,7 +976,8 @@ internal sealed class MediaLyricsController : IDisposable
         if (elapsed > TimeSpan.FromSeconds(2)) elapsed = TimeSpan.FromSeconds(2);
 
         var shouldAdvance = _clockPlaying || nowTicks < _uiPlaybackEvidenceUntilTicks;
-        var advance = shouldAdvance ? elapsed : TimeSpan.Zero;
+        var playbackElapsed = TimeSpan.FromTicks((long)(elapsed.Ticks * _playbackRate));
+        var advance = shouldAdvance ? playbackElapsed : TimeSpan.Zero;
         if (shouldAdvance && _clockCorrection != TimeSpan.Zero)
         {
             // Slew by at most 20% of real time. Negative correction still leaves
