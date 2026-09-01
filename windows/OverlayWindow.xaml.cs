@@ -23,6 +23,7 @@ public partial class OverlayWindow : Window, IDisposable
     private const int HtTransparent = -1;
     private readonly MediaLyricsController _controller;
     private readonly DispatcherTimer _lockedHoverTimer;
+    private readonly DispatcherTimer _pointerPassThroughTimer;
     private readonly DispatcherTimer _placementSaveTimer;
     private readonly DispatcherTimer _burnInTimer;
     private HwndSource? _hwndSource;
@@ -33,6 +34,7 @@ public partial class OverlayWindow : Window, IDisposable
     private double _unlockTop;
     private bool _clickThrough;
     private bool _locked;
+    private bool _nativePointerPassThrough;
     private bool _allowClose;
     private double _highlightProgress;
     private double _highlightTextStart;
@@ -99,6 +101,8 @@ public partial class OverlayWindow : Window, IDisposable
         };
         _lockedHoverTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100),
             DispatcherPriority.Background, (_, _) => TrackLockedHover(), Dispatcher);
+        _pointerPassThroughTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(50),
+            DispatcherPriority.Input, (_, _) => TrackPointerPassThrough(), Dispatcher);
         _burnInTimer = new DispatcherTimer(TimeSpan.FromSeconds(1),
             DispatcherPriority.Background, (_, _) => UpdateBurnInProtection(), Dispatcher);
         CurrentHighlightLine.Clip = _highlightClip;
@@ -151,6 +155,7 @@ public partial class OverlayWindow : Window, IDisposable
         UpdateTypography();
         UpdateLyricsModeIcon();
         _controller.SetPresentationState(visible: true, _karaokeMode);
+        _pointerPassThroughTimer.Start();
         SaveSettings();
     }
 
@@ -170,7 +175,7 @@ public partial class OverlayWindow : Window, IDisposable
             unchecked((short)(packed & 0xffff)),
             unchecked((short)((packed >> 16) & 0xffff)));
         var localPoint = PointFromScreen(screenPoint);
-        if (InteractiveRegion().Contains(localPoint)) return IntPtr.Zero;
+        if (IsInteractivePoint(localPoint)) return IntPtr.Zero;
 
         handled = true;
         return new IntPtr(HtTransparent);
@@ -456,10 +461,47 @@ public partial class OverlayWindow : Window, IDisposable
         Grip.Margin = new Thickness(0, backdropTop + backdropHeight - Grip.Height - 4, 4, 0);
     }
 
-    private Rect InteractiveRegion()
+    private bool IsInteractivePoint(System.Windows.Point point)
     {
-        var height = Math.Max(54, ActualHeight * 0.46);
-        return new Rect(0, Math.Max(0, (ActualHeight - height) / 2), ActualWidth, height);
+        return ElementBoundsContains(LyricsLayer, point, 10, 8) ||
+               ElementBoundsContains(Toolbar, point, 2, 2) ||
+               ElementBoundsContains(SourceBadge, point, 4, 4) ||
+               (!_locked && ElementBoundsContains(Grip, point, 4, 4));
+    }
+
+    private bool ElementBoundsContains(
+        FrameworkElement element, System.Windows.Point point, double horizontalPadding,
+        double verticalPadding)
+    {
+        if (!element.IsVisible || element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+        try
+        {
+            var origin = element.TransformToAncestor(this).Transform(new System.Windows.Point());
+            var bounds = new Rect(origin.X, origin.Y, element.ActualWidth, element.ActualHeight);
+            bounds.Inflate(horizontalPadding, verticalPadding);
+            return bounds.Contains(point);
+        }
+        catch (InvalidOperationException) { return false; }
+    }
+
+    private void TrackPointerPassThrough()
+    {
+        if (!IsVisible) return;
+        var cursor = System.Windows.Forms.Cursor.Position;
+        var local = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
+        var isInsideWindow = new Rect(0, 0, ActualWidth, ActualHeight).Contains(local);
+        var desiredInterval = isInsideWindow
+            ? TimeSpan.FromMilliseconds(50)
+            : TimeSpan.FromMilliseconds(200);
+        if (_pointerPassThroughTimer.Interval != desiredInterval)
+            _pointerPassThroughTimer.Interval = desiredInterval;
+        var shouldPassThrough = !_locked && !_clickThrough && !IsInteractivePoint(local);
+        if (_nativePointerPassThrough == shouldPassThrough) return;
+        _nativePointerPassThrough = shouldPassThrough;
+        ApplyExtendedStyles();
+        if (!shouldPassThrough) return;
+        Toolbar.Visibility = Visibility.Collapsed;
+        HoverBackdrop.Background = System.Windows.Media.Brushes.Transparent;
     }
 
     private void ScheduleToolbarPlacement()
@@ -943,6 +985,7 @@ public partial class OverlayWindow : Window, IDisposable
     {
         SaveSettings();
         _lockedHoverTimer.Stop();
+        _pointerPassThroughTimer.Stop();
         _controller.SetPresentationState(visible: false, _karaokeMode);
         _lockedHoverStartedAt = null;
         _unlockRequestedVisible = false;
@@ -953,6 +996,7 @@ public partial class OverlayWindow : Window, IDisposable
     public void ShowFromTray()
     {
         Show();
+        _pointerPassThroughTimer.Start();
         _controller.SetPresentationState(visible: true, _karaokeMode);
         if (_locked)
         {
@@ -980,7 +1024,7 @@ public partial class OverlayWindow : Window, IDisposable
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
         var style = GetWindowLongPtr(handle, GwlExStyle).ToInt64() | WsExToolWindow;
-        style = (_clickThrough || _locked)
+        style = (_clickThrough || _locked || _nativePointerPassThrough)
             ? style | WsExTransparent
             : style & ~WsExTransparent;
         SetWindowLongPtr(handle, GwlExStyle, new IntPtr(style));
@@ -991,6 +1035,7 @@ public partial class OverlayWindow : Window, IDisposable
         SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();
+        _pointerPassThroughTimer.Stop();
         _burnInTimer.Stop();
         _hwndSource?.RemoveHook(WindowMessageHook);
         _hwndSource = null;

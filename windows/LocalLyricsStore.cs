@@ -58,6 +58,11 @@ internal sealed class LocalLyricsStore
         Save(_cachePath, _cache);
     }
 
+    public void RemoveCache(string songKey)
+    {
+        if (_cache.Remove(songKey)) Save(_cachePath, _cache);
+    }
+
     private static StoredLyrics? Get(Dictionary<string, StoredLyrics> source, string key) =>
         !string.IsNullOrWhiteSpace(key) && source.TryGetValue(key, out var value) ? value : null;
 

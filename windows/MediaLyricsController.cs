@@ -13,6 +13,7 @@ internal sealed class MediaLyricsController : IDisposable
     private readonly Action<string> _notify;
     private readonly LyricsClient _lyricsClient = new();
     private readonly AppleMusicUiLyricsProvider _appleLyrics = new();
+    private readonly AppleMusicUiPlaybackController _applePlayback = new();
     private readonly SongOffsetStore _offsetStore = new();
     private readonly SongLyricsChoiceStore _choiceStore = new();
     private readonly LocalLyricsStore _localLyrics = new();
@@ -305,19 +306,24 @@ internal sealed class MediaLyricsController : IDisposable
         _lyricsCts.Cancel();
         _lyricsCts.Dispose();
         _lyricsCts = new CancellationTokenSource();
+        var loadCts = _lyricsCts;
+        var loadMediaKey = _mediaKey;
+        bool IsStaleLoad() => loadCts.IsCancellationRequested ||
+            !string.Equals(loadMediaKey, _mediaKey, StringComparison.Ordinal);
         var failurePrefix = "歌词加载失败";
         try
         {
-            var local = _localLyrics.GetOverride(_mediaKey);
+            var local = _localLyrics.GetOverride(loadMediaKey);
             if (local is not null && TryApplyStoredLyrics(local, LyricsLoadKind.Local)) return;
 
             failurePrefix = "LRCLIB 获取失败";
-            var search = await _lyricsClient.SearchAsync(title, artist, album, duration, _lyricsCts.Token);
+            var search = await _lyricsClient.SearchAsync(title, artist, album, duration, loadCts.Token);
+            if (IsStaleLoad()) return;
             failurePrefix = "LRCLIB 歌词处理失败";
             _candidates = search.Candidates;
             if (_candidates.Count > 0)
             {
-                var remembered = _choiceStore.Get(_mediaKey);
+                var remembered = _choiceStore.Get(loadMediaKey);
                 var rememberedIndex = remembered is null
                     ? -1
                     : _candidates.ToList().FindIndex(item => item.Key == remembered);
@@ -330,19 +336,21 @@ internal sealed class MediaLyricsController : IDisposable
                 }
             }
 
-            var cached = _localLyrics.GetCache(_mediaKey);
+            var cached = _localLyrics.GetCache(loadMediaKey);
             if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
-            if (await TryAppleLyricsFallbackAsync(title)) return;
+            if (await TryAppleLyricsFallbackAsync(title, loadMediaKey, loadCts.Token)) return;
+            if (IsStaleLoad()) return;
             MarkLyricsUnavailable("LRCLIB 没有匹配歌词；" + _appleLyrics.LastFailureReason);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (IsStaleLoad()) return;
             try
             {
-                var cached = _localLyrics.GetCache(_mediaKey);
+                var cached = _localLyrics.GetCache(loadMediaKey);
                 if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
-                if (await TryAppleLyricsFallbackAsync(title)) return;
+                if (await TryAppleLyricsFallbackAsync(title, loadMediaKey, loadCts.Token)) return;
             }
             catch (OperationCanceledException) { return; }
             catch { /* Preserve the original LRCLIB error below. */ }
@@ -350,10 +358,12 @@ internal sealed class MediaLyricsController : IDisposable
         }
     }
 
-    private async Task<bool> TryAppleLyricsFallbackAsync(string title)
+    private async Task<bool> TryAppleLyricsFallbackAsync(
+        string title, string expectedMediaKey, CancellationToken cancellationToken)
     {
-        var appleSnapshot = await _appleLyrics.PrepareAsync(title, _lyricsCts.Token);
-        if (appleSnapshot is null) return false;
+        var appleSnapshot = await _appleLyrics.PrepareAsync(title, cancellationToken);
+        if (appleSnapshot is null || cancellationToken.IsCancellationRequested ||
+            !string.Equals(expectedMediaKey, _mediaKey, StringComparison.Ordinal)) return false;
         _usingAppleLyrics = true;
         _appleFallbackUnavailable = false;
         _lyricsLoadKind = LyricsLoadKind.Apple;
@@ -507,7 +517,16 @@ internal sealed class MediaLyricsController : IDisposable
         _practiceSeeking = true;
         try
         {
-            if (!await _session.TryChangePlaybackPositionAsync(start.Ticks))
+            var accepted = await _session.TryChangePlaybackPositionAsync(start.Ticks);
+            if (accepted)
+            {
+                await Task.Delay(220);
+                var observed = _session.GetTimelineProperties().Position;
+                accepted = Math.Abs((observed - start).TotalSeconds) <= 1.25;
+            }
+            if (!accepted)
+                accepted = await Task.Run(() => _applePlayback.TrySeek(start));
+            if (!accepted)
             {
                 ClearPracticeLoop(notify: false);
                 _notify("Apple Music 不接受循环回跳，已关闭练习循环");
@@ -808,7 +827,21 @@ internal sealed class MediaLyricsController : IDisposable
         var expected = rawPosition + _lyricsOffset + _automaticOffset;
         var lineIndex = LyricTiming.FindCalibrationLine(
             _lines, snapshot.Current, _pendingCalibrationNext, expected);
-        if (lineIndex < 0) return;
+        if (lineIndex < 0)
+        {
+            if (LyricsContentCompatibility.IsClearlyIncompatible(
+                    _lines, snapshot.Current, _pendingCalibrationNext))
+            {
+                _localLyrics.RemoveCache(_mediaKey);
+                _usingAppleLyrics = true;
+                _appleFallbackUnavailable = false;
+                _lyricsLoadKind = LyricsLoadKind.Apple;
+                ResetTimingState();
+                ApplyAppleSnapshot(snapshot);
+                _notify("LRCLIB 歌词内容与 Apple Music 不一致，已切换官方歌词");
+            }
+            return;
+        }
         if (TryRecoverBackwardSeek(
                 snapshot, lineIndex, expected, calibrationTicks)) return;
         if (lineIndex <= _lastCalibrationLineIndex) return;

@@ -50,7 +50,7 @@ dotnet run --project .\windows\AppleMusicDesktopLyrics.csproj
 
 应用通过系统媒体会话读取当前曲目的歌名、歌手、专辑、时长、播放状态和进度。LRCLIB 找不到歌词时，
 Windows UI Automation 会按“当前伴奏标记、`CurrentLine` 当前行、虚拟化 `Line` 列表”三个独立策略读取 Apple Music 已显示的歌词行作为后备；LRCLIB 可用且歌词面板已经打开时，
-用户主动开启实验自动对时后，也会以只读方式将官方当前行作为校准信号，但不会替换 LRCLIB。它兼容提供 `CurrentLine` 的版本，
+用户主动开启实验自动对时后，也会以只读方式将官方当前行作为校准信号；若连续确认的官方两句与 LRCLIB 正文明显无关，则清除该错误缓存并切换官方歌词。它兼容提供 `CurrentLine` 的版本，
 也兼容仅提供虚拟化 `Line` 列表的新版本。此过程不读取 Apple ID、密码、Cookie 或令牌。为匹配首选同步歌词，
 只有歌名和歌手会发送给 LRCLIB；专辑与歌曲时长仅在本机用于筛选返回候选。无结果时才会自动打开 Apple Music 歌词面板。窗口、字体、逐歌曲时间偏移和
 歌词版本选择只保存在本机。Apple 后备连续读取失败时会明确显示不可用原因，并保留导入本地 LRC 和手动重新获取入口，不会冻结在旧歌词上。

@@ -98,4 +98,15 @@ Equal(LyricsMatchConfidence.Medium, LyricsMatchConfidenceEvaluator.Evaluate(
 Equal("时长不符（相差 8.0 秒）", LyricsMatchConfidenceEvaluator.Evaluate(
     1, 1, 8, 0, true).Reason, "duration mismatch is explained");
 
+var correctIdolLyrics = LrcParser.Parse(
+    "[00:40.00]誰もが目を奪われていく\n[00:44.00]君は完璧で究極のアイドル");
+Equal(false, LyricsContentCompatibility.IsClearlyIncompatible(
+    correctIdolLyrics, "誰もが目を奪われていく", "君は完璧で究極のアイドル"),
+    "matching official lines keep LRCLIB timeline");
+var corruptedIdolLyrics = LrcParser.Parse(
+    "[00:43.12]負う不 楽しく 離脱\n[00:49.17]音字 乖離 政治");
+Equal(true, LyricsContentCompatibility.IsClearlyIncompatible(
+    corruptedIdolLyrics, "嘘か本当か知り得ない", "そんな言葉にまた踊る"),
+    "unrelated official line pair rejects corrupted LRCLIB lyrics");
+
 Console.WriteLine("Windows core tests passed.");

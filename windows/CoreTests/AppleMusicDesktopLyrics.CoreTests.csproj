@@ -17,5 +17,6 @@
     <Compile Include="..\SingleInstanceCoordinator.cs" Link="SingleInstanceCoordinator.cs" />
     <Compile Include="..\SongMetadataNormalizer.cs" Link="SongMetadataNormalizer.cs" />
     <Compile Include="..\LyricsMatchConfidence.cs" Link="LyricsMatchConfidence.cs" />
+    <Compile Include="..\LyricsContentCompatibility.cs" Link="LyricsContentCompatibility.cs" />
   </ItemGroup>
 </Project>
