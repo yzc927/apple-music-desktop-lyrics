@@ -24,10 +24,10 @@
                     <TranslateTransform x:Name="BurnInShift" />
                 </StackPanel.RenderTransform>
                 <Grid x:Name="CurrentRubyGrid" Height="18" Margin="0,0,0,-1"
-                      Visibility="Collapsed" IsHitTestVisible="False">
+                      Visibility="Collapsed" IsHitTestVisible="True">
                     <StackPanel x:Name="CurrentRubyLine" Orientation="Horizontal"
                                 HorizontalAlignment="Center" />
-                    <StackPanel x:Name="CurrentRubyHighlightLine" Orientation="Horizontal"
+                    <StackPanel x:Name="CurrentRubyHighlightLine" Orientation="Horizontal" IsHitTestVisible="False"
                                 HorizontalAlignment="Center" />
                 </Grid>
                 <Grid>
@@ -46,7 +46,7 @@
                 </Grid>
                 <StackPanel x:Name="NextRubyLine" Height="12" Margin="0,5,0,-2"
                             Orientation="Horizontal" HorizontalAlignment="Center"
-                            Visibility="Collapsed" IsHitTestVisible="False" />
+                            Visibility="Collapsed" IsHitTestVisible="True" />
                 <TextBlock x:Name="NextLine" Margin="0,5,0,0" Text=""
                        Foreground="#BFFFFFFF" FontFamily="Microsoft YaHei UI"
                        FontSize="19" TextAlignment="Center" TextTrimming="CharacterEllipsis">

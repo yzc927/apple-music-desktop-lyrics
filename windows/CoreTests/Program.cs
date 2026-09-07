@@ -109,4 +109,51 @@ Equal(true, LyricsContentCompatibility.IsClearlyIncompatible(
     corruptedIdolLyrics, "嘘か本当か知り得ない", "そんな言葉にまた踊る"),
     "unrelated official line pair rejects corrupted LRCLIB lyrics");
 
-Console.WriteLine("Windows core tests passed.");
+var preferences = new LyricsPreferences();
+preferences.Rejected["song-a"] = new() { "wrong-version" };
+Equal(true, preferences.IsRejected("song-a", "wrong-version"), "rejected version remembered");
+Equal(false, preferences.IsRejected("song-b", "wrong-version"), "rejections isolated by song");
+preferences.Readings["song-a"] = new() { ["明日"] = new("あした", true) };
+var roundTrip = System.Text.Json.JsonSerializer.Deserialize<LyricsPreferences>(
+    System.Text.Json.JsonSerializer.Serialize(preferences))!;
+Equal("あした", roundTrip.GetReading("song-a", "明日")?.Reading, "reading persistence roundtrip");
+Equal<ReadingPreference?>(null, roundTrip.GetReading("song-b", "明日"), "readings isolated by song");
+var automaticRuby = new RubySegment[] { new("明日", "あす"), new("へ", "") };
+var correctedRuby = PersonalRubyRules.Apply("明日へ", automaticRuby, preferences.Readings["song-a"], false);
+Equal("あした", correctedRuby[0].ReadingText, "correct special sung reading");
+Equal("明日へ", string.Concat(correctedRuby.Select(segment => segment.DisplayText)), "preserve lyric surface");
+Equal(0, PersonalRubyRules.Apply("明日へ", automaticRuby, preferences.Readings["song-a"], true).Count, "hide familiar readings");
+var rubyWithoutAnalyzer = PersonalRubyRules.Apply("明日", [], preferences.Readings["song-a"], false);
+Equal("あした", rubyWithoutAnalyzer[0].ReadingText, "custom reading works without language components");
+var longestRuby = PersonalRubyRules.Apply("明日へ", automaticRuby,
+    new Dictionary<string, ReadingPreference> { ["明"] = new("めい", false), ["明日"] = new("あした", false) }, false);
+Equal("明日", longestRuby[0].DisplayText, "longest override wins");
+Exception? hotkeyFailure = null;
+var shortcutThread = new Thread(() =>
+{
+    var previousKeys = LyricsPreferences.Current.Hotkeys;
+    try
+    {
+        LyricsPreferences.Current.Hotkeys = new() { ["test"] = "Ctrl+Alt+Shift+F24" };
+        using var first = new GlobalLyricsHotkeys(new() { ["test"] = () => { } });
+        Equal(true, first.Status.Contains("已启用 1 个"), "native hotkey registration");
+        using var second = new GlobalLyricsHotkeys(new() { ["test"] = () => { } });
+        Equal(true, second.Status.Contains("占用"), "native occupied hotkey notice");
+        first.Dispose(); second.Apply();
+        Equal(true, second.Status.Contains("已启用 1 个"), "hotkey released on dispose");
+        LyricsPreferences.Current.Hotkeys["duplicate"] = "Ctrl+Alt+Shift+F24";
+        second.Dispose();
+        using var duplicated = new GlobalLyricsHotkeys(new() { ["test"] = () => { }, ["duplicate"] = () => { } });
+        Equal(true, duplicated.Status.Contains("重复"), "internal hotkey conflict");
+        LyricsPreferences.Current.Hotkeys["test"] = "nonsense";
+        LyricsPreferences.Current.Hotkeys["duplicate"] = "";
+        duplicated.Apply();
+        Equal(true, duplicated.Status.Contains("格式无效"), "invalid shortcut notice");
+    }
+    catch (Exception ex) { hotkeyFailure = ex; }
+    finally { LyricsPreferences.Current.Hotkeys = previousKeys; }
+});
+shortcutThread.SetApartmentState(ApartmentState.STA);
+shortcutThread.Start(); shortcutThread.Join();
+if (hotkeyFailure is not null) throw hotkeyFailure;
+Console.WriteLine("Windows core tests passed (including native hotkey conflicts, version exclusions and personal ruby).");

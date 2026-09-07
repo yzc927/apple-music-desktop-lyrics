@@ -9,7 +9,12 @@ namespace AppleMusicDesktopLyrics;
 
 internal sealed record LyricsCandidate(
     string Key, string Label, IReadOnlyList<LyricLine> Lines, double Score,
-    LyricsMatchAssessment Match);
+    LyricsMatchAssessment Match, double? DurationDifferenceSeconds = null)
+{
+    public string Preview => $"{Label}\n时长差：{(DurationDifferenceSeconds is { } difference ? $"{difference:+0.0;-0.0;0.0} 秒" : "未知")} · " +
+        (Lines.Any(line => line.HasWordTiming) ? "含逐词时间轴" : "整句时间轴") + "\n" +
+        string.Join("\n", Lines.Where(line => !string.IsNullOrWhiteSpace(line.Text)).Take(2).Select(line => line.Text));
+}
 
 internal sealed record LyricsSearchResult(IReadOnlyList<LyricsCandidate> Candidates)
 {
@@ -107,7 +112,7 @@ internal sealed partial class LyricsClient
         var albumLabel = string.IsNullOrWhiteSpace(item.AlbumName) ? "" : $" · {item.AlbumName}";
         return new LyricsCandidate(
             CandidateKey(item), $"{item.ArtistName}{albumLabel} · {durationLabel}", lines, score,
-            assessment);
+            assessment, item.Duration is { } candidateSeconds && duration.TotalSeconds > 0 ? candidateSeconds - duration.TotalSeconds : null);
     }
 
     private static double Score(

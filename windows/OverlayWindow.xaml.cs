@@ -22,6 +22,13 @@ public partial class OverlayWindow : Window, IDisposable
     private const int WmNcHitTest = 0x0084;
     private const int HtTransparent = -1;
     private readonly MediaLyricsController _controller;
+    private string _rubySongKey = "";
+    internal GlobalLyricsHotkeys? GlobalHotkeys { get; private set; }
+    internal string CurrentSongKey => _controller.SongKey;
+    internal IReadOnlyList<LyricsCandidate> LyricsCandidates => _controller.Candidates;
+    internal void SelectLyricsVersion(string song, string key) => _controller.SelectCandidate(song, key);
+    internal void RejectLyricsVersion(string song, string key) => _controller.RejectCandidate(song, key);
+    internal void RestoreLyricsVersions() => _controller.RestoreRejectedCandidates();
     private readonly DispatcherTimer _lockedHoverTimer;
     private readonly DispatcherTimer _pointerPassThroughTimer;
     private readonly DispatcherTimer _placementSaveTimer;
@@ -161,6 +168,15 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
+        GlobalHotkeys = new GlobalLyricsHotkeys(new()
+        {
+            ["显示 / 隐藏"] = () => { if (IsVisible) HideToTray(); else ShowFromTray(); },
+            ["锁定 / 解锁"] = ToggleLock,
+            ["歌词慢 0.5 秒"] = () => AdjustLyrics(-0.5),
+            ["歌词快 0.5 秒"] = () => AdjustLyrics(0.5),
+            ["循环当前句"] = ToggleCurrentLineLoop
+        });
+        Closed += (_, _) => GlobalHotkeys.Dispose();
         _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _hwndSource?.AddHook(WindowMessageHook);
     }
@@ -199,12 +215,14 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void SetLines(string current, string next, double progress, string artist)
     {
+        var songChanged = _rubySongKey != CurrentSongKey;
+        _rubySongKey = CurrentSongKey;
         if (!string.Equals(_lastArtist, artist, StringComparison.Ordinal))
         {
             _lastArtist = artist;
             if (_autoColor) ApplyAutomaticColor(artist);
         }
-        if (!string.Equals(CurrentLine.Text, current, StringComparison.Ordinal))
+        if (songChanged || !string.Equals(CurrentLine.Text, current, StringComparison.Ordinal))
         {
             CurrentLine.Text = current;
             CurrentHighlightLine.Text = current;
@@ -216,7 +234,7 @@ public partial class OverlayWindow : Window, IDisposable
             SetLyricsLayerOpacity(1);
             BurnInShift.X = BurnInShift.Y = 0;
         }
-        if (!string.Equals(NextLine.Text, next, StringComparison.Ordinal))
+        if (songChanged || !string.Equals(NextLine.Text, next, StringComparison.Ordinal))
         {
             NextLine.Text = next;
             BuildNextRuby(next);
@@ -320,9 +338,22 @@ public partial class OverlayWindow : Window, IDisposable
         UpdateHighlightClip();
     }
 
+    internal string[] CurrentRubyWords => JapaneseRubyAnalyzer.Analyze(CurrentLine.Text)
+        .Select(segment => segment.DisplayText)
+        .Concat(LyricsPreferences.Current.Readings.TryGetValue(CurrentSongKey, out var words) ? words.Keys : [])
+        .Where(word => !string.IsNullOrWhiteSpace(word)).Distinct().ToArray();
+    internal void RefreshPersonalRuby() => RefreshRubyLines();
+    private IReadOnlyList<RubySegment> AnalyzePersonalRuby(string text)
+    {
+        var preferences = LyricsPreferences.Current;
+        var automatic = JapaneseRubyAnalyzer.Analyze(text);
+        if (!preferences.Readings.TryGetValue(CurrentSongKey, out var entries)) return automatic;
+        return PersonalRubyRules.Apply(text, automatic, entries, preferences.OnlyUnfamiliar);
+    }
+
     private void BuildCurrentRuby(string text)
     {
-        var segments = JapaneseRubyAnalyzer.Analyze(text);
+        var segments = AnalyzePersonalRuby(text);
         CurrentRubyLine.Children.Clear();
         CurrentRubyHighlightLine.Children.Clear();
         CurrentRubyGrid.Visibility = segments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -336,7 +367,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void BuildNextRuby(string text)
     {
-        var segments = JapaneseRubyAnalyzer.Analyze(text);
+        var segments = AnalyzePersonalRuby(text);
         NextRubyLine.Children.Clear();
         NextRubyLine.Visibility = segments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         if (segments.Count == 0) return;
@@ -388,6 +419,14 @@ public partial class OverlayWindow : Window, IDisposable
                     Opacity = 0.95
                 };
             }
+            ruby.ToolTip = $"{item.Segment.DisplayText}：双击修改本曲读音";
+            ruby.MouseLeftButtonDown += (_, e) =>
+            {
+                if (_locked || _clickThrough) return;
+                e.Handled = true;
+                if (e.ClickCount != 2) return;
+                LyricsInteractionWindow.Reading(this, this, item.Segment.DisplayText);
+            };
             panel.Children.Add(ruby);
             offset += item.Width;
         }
@@ -1032,6 +1071,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     public void Dispose()
     {
+        GlobalHotkeys?.Dispose();
         SaveSettings();
         _placementSaveTimer.Stop();
         _lockedHoverTimer.Stop();

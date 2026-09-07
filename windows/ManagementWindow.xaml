@@ -253,8 +253,7 @@
                                     <TextBlock x:Name="OffsetText" Margin="0,7,0,0" Foreground="#FF6F7684" />
                                     <TextBlock Text="歌词版本" Margin="0,14,0,7" Foreground="#FF6F7684" />
                                     <WrapPanel>
-                                        <Button Content="◀" Width="42" Padding="6,5" Click="PreviousLyrics_Click" />
-                                        <Button Content="▶" Width="42" Padding="6,5" Click="NextLyrics_Click" />
+                                        <Button Content="查看候选 / 排除错版" Click="LyricsVersions_Click" />
                                     </WrapPanel>
                                     <TextBlock x:Name="LyricsVersionText" Margin="0,7,0,0"
                                                TextWrapping="Wrap" Foreground="#FF6F7684" />
@@ -263,7 +262,7 @@
                                                Text="匹配置信度：尚未评估" />
                                     <Button x:Name="AutoTimingButton" Margin="0,14,0,0"
                                             HorizontalAlignment="Left" Click="AutoTimingButton_Click" />
-                                    <TextBlock Text="默认开启；以 Apple Music 当前高亮歌词校准 LRCLIB 时间。"
+                                    <TextBlock Text="实验选项，默认关闭；开启后以 Apple Music 当前高亮歌词校准 LRCLIB 时间。"
                                                Margin="0,7,0,0" TextWrapping="Wrap" Foreground="#FF6F7684" />
                                 </StackPanel>
 
@@ -292,6 +291,11 @@
 
                         <Border Margin="0,12,0,0" Padding="18" Style="{StaticResource CardBorderStyle}">
                             <StackPanel>
+                                <WrapPanel Margin="0,0,0,12">
+                                    <Button Content="全局快捷键" Click="GlobalHotkeys_Click" Margin="0,0,8,0" />
+                                    <Button Content="本曲读音 / 生词注音" Click="PersonalReading_Click" />
+                                </WrapPanel>
+                                <TextBlock x:Name="GlobalHotkeyStatus" TextWrapping="Wrap" Margin="0,0,0,10" />
                                 <TextBlock Text="跟唱练习模式" FontWeight="SemiBold" FontSize="15" />
                                 <TextBlock Text="循环当前歌词行，或设置任意 A/B 区间；难点标记会永久保存在本机。"
                                            Margin="0,5,0,0" TextWrapping="Wrap" Foreground="#FF6F7684" />

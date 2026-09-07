@@ -320,7 +320,7 @@ internal sealed class MediaLyricsController : IDisposable
             var search = await _lyricsClient.SearchAsync(title, artist, album, duration, loadCts.Token);
             if (IsStaleLoad()) return;
             failurePrefix = "LRCLIB 歌词处理失败";
-            _candidates = search.Candidates;
+            _candidates = search.Candidates.Where(item => !LyricsPreferences.Current.IsRejected(loadMediaKey, item.Key)).ToArray();
             if (_candidates.Count > 0)
             {
                 var remembered = _choiceStore.Get(loadMediaKey);
@@ -1038,6 +1038,32 @@ internal sealed class MediaLyricsController : IDisposable
         if (next < 0) next += _candidates.Count;
         ApplyCandidate(next, remember: true);
         ShowTransient($"已切换歌词版本 {_candidateIndex + 1}/{_candidates.Count}");
+    }
+
+    internal string SongKey => _mediaKey;
+    internal IReadOnlyList<LyricsCandidate> Candidates => _candidates;
+    internal void SelectCandidate(string songKey, string key)
+    {
+        if (songKey != _mediaKey) return;
+        var index = _candidates.ToList().FindIndex(item => item.Key == key);
+        if (index >= 0) ApplyCandidate(index, remember: true);
+    }
+    internal void RejectCandidate(string songKey, string key)
+    {
+        if (songKey != _mediaKey || !_candidates.Any(item => item.Key == key)) return;
+        var preferences = LyricsPreferences.Current;
+        if (!preferences.Rejected.TryGetValue(songKey, out var rejected))
+            preferences.Rejected[songKey] = rejected = new();
+        rejected.Add(key);
+        preferences.Save();
+        _localLyrics.RemoveCache(songKey);
+        RefreshLyrics();
+    }
+    internal void RestoreRejectedCandidates()
+    {
+        LyricsPreferences.Current.Rejected.Remove(_mediaKey);
+        LyricsPreferences.Current.Save();
+        RefreshLyrics();
     }
 
     private bool TryApplyStoredLyrics(StoredLyrics stored, LyricsLoadKind kind)

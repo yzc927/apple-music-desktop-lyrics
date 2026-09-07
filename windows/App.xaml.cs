@@ -32,6 +32,8 @@ public partial class App : System.Windows.Application
         }
 
         _window = new OverlayWindow();
+        // Register shortcuts even while waiting invisibly for Apple Music to open.
+        new System.Windows.Interop.WindowInteropHelper(_window).EnsureHandle();
         _followService = new AppleMusicFollowService();
         _followService.RunningChanged += ApplyAppleMusicRunningState;
         if (!_followService.Enabled) _window.Show();

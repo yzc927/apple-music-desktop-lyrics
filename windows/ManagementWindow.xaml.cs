@@ -55,6 +55,7 @@ public partial class ManagementWindow : Window
     {
         var artist = string.IsNullOrWhiteSpace(_overlay.CurrentArtist) ? "尚未读取到歌手" : _overlay.CurrentArtist;
         CurrentArtistText.Text = artist;
+        GlobalHotkeyStatus.Text = _overlay.GlobalHotkeys?.Status ?? "快捷键尚未初始化";
         CurrentModeText.Text = _overlay.IsAutoColor ? "自动配色已开启；未收录歌手使用所选后备色" : "当前使用手动颜色";
         LyricsSourceText.Text = $"歌词来源：{_overlay.CurrentLyricsSource}";
         LyricsVersionText.Text = _overlay.LyricsCandidateCount > 0
@@ -100,6 +101,10 @@ public partial class ManagementWindow : Window
         CurrentPalettePreview.Background = CreateBrush(
             ArtistColorEngine.Resolve(artist, _overlay.FallbackHighlightColor).Colors);
     }
+
+    private void LyricsVersions_Click(object sender, RoutedEventArgs e) => LyricsInteractionWindow.Versions(_overlay, this);
+    private void GlobalHotkeys_Click(object sender, RoutedEventArgs e) => LyricsInteractionWindow.Hotkeys(_overlay, this);
+    private void PersonalReading_Click(object sender, RoutedEventArgs e) => LyricsInteractionWindow.Reading(_overlay, this);
 
     private void BuildArtistList()
     {
