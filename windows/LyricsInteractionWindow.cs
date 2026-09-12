@@ -28,17 +28,38 @@ internal sealed class LyricsInteractionWindow : Window
     {
         var window = new LyricsInteractionWindow("选择歌词版本", owner);
         var song = overlay.CurrentSongKey;
-        window.Text("显示本次匹配候选。排除的版本不会再自动选择；歌曲切换后请重新打开此窗口。");
+        window.Text("推荐候选的歌名吻合、时长相差不超过 2.5 秒，且版本标签相同。请核对是否为同一歌手；翻唱者不能记成原歌手别名。歌曲切换后请重新打开。");
         var items = new ListBox { MaxHeight = 340 };
         foreach (var candidate in overlay.LyricsCandidates)
-            items.Items.Add(new ListBoxItem { Tag = candidate.Key, Content = new TextBlock { Text = candidate.Preview, TextWrapping = TextWrapping.Wrap, MaxWidth = 535, Margin = new Thickness(4, 8, 4, 8) } });
+            items.Items.Add(new ListBoxItem { Tag = candidate.Key, Content = new TextBlock { Text =
+                (candidate.AliasRecommendation ? $"推荐确认歌手：{candidate.ExpectedArtist} ↔ {candidate.CandidateArtist}\n" : "") +
+                candidate.Preview, TextWrapping = TextWrapping.Wrap, MaxWidth = 535, Margin = new Thickness(4, 8, 4, 8) } });
         items.SelectedIndex = overlay.LyricsCandidateIndex;
         window._body.Children.Add(items);
         void CheckSong() { if (song != overlay.CurrentSongKey) throw new InvalidOperationException("歌曲已经切换，请重新打开版本列表。"); }
         window.Action("使用所选版本", () => { CheckSong(); if (items.SelectedItem is ListBoxItem item) { overlay.SelectLyricsVersion(song, (string)item.Tag); window.Close(); } });
+        window.Text("“使用所选版本”只记住本曲。下面的确认会保存歌手关系，以后其他歌曲也可自动匹配。");
+        window.Action("确认是同一歌手，记住别名并使用", () =>
+        {
+            CheckSong();
+            if (items.SelectedItem is not ListBoxItem item) throw new InvalidOperationException("请先选择一个推荐候选。");
+            var candidate = overlay.LyricsCandidates.First(value => value.Key == (string)item.Tag);
+            if (!candidate.AliasRecommendation) throw new InvalidOperationException("此候选无需或不适合建立歌手别名关系。");
+            if (System.Windows.MessageBox.Show(window,
+                $"确认 {candidate.ExpectedArtist} 与 {candidate.CandidateArtist} 是同一歌手？\n以后这两个名字会自动匹配。翻唱版本请只使用本曲版本。",
+                "确认歌手别名", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            overlay.ConfirmLyricsAlias(song, candidate.Key); window.Close();
+        });
         window.Action("这个版本不对，记住并排除", () => { CheckSong(); if (items.SelectedItem is ListBoxItem item) { overlay.RejectLyricsVersion(song, (string)item.Tag); window.Close(); } });
         window.Action("恢复本曲已排除的版本", () => { CheckSong(); overlay.RestoreLyricsVersions(); window.Close(); });
         if (items.Items.Count == 0) window.Text("当前没有在线候选。可关闭窗口后重新获取歌词，或恢复已排除的版本。");
+        if (ConfirmedArtistAliases.Current.Items.Count > 0)
+        {
+            window.Text("已记住的歌手别名（撤销只影响跨歌曲匹配，本曲已选版本仍保留）：");
+            foreach (var alias in ConfirmedArtistAliases.Current.Items)
+                window.Action($"撤销：{alias.First} ↔ {alias.Second}", () =>
+                { ConfirmedArtistAliases.Current.Remove(alias); overlay.RefreshLyrics(); window.Close(); });
+        }
         window.ShowDialog();
     }
     internal static void Hotkeys(OverlayWindow overlay, Window owner)

@@ -297,3 +297,30 @@ if (args.Contains("--check-current-song"))
         "live current song exact recording matches");
 }
 Console.WriteLine("Localized artist matching tests passed.");
+
+Equal(true, LyricsClient.IsAliasRecommendation(1, 0, 2.5, 0, true, "测试歌手", "Test Singer"), "close recording recommends confirmation");
+Equal(false, LyricsClient.IsAliasRecommendation(1, 0, 3, 0, true, "测试歌手", "Test Singer"), "duration mismatch not recommended");
+Equal(false, LyricsClient.IsAliasRecommendation(0.9, 0, 0, 0, true, "测试歌手", "Test Singer"), "similar title not sufficient");
+Equal(false, LyricsClient.IsAliasRecommendation(1, 0, 0, 34, true, "测试歌手", "Test Singer"), "live or instrumental difference not recommended");
+Equal(false, LyricsClient.IsAliasRecommendation(1, 0, 0, 0, false, "测试歌手", "Test Singer"), "missing duration not recommended");
+Equal(false, LyricsClient.IsAliasRecommendation(1, 0, 0, 0, true, "甲 & 乙", "Test Singer"), "collaboration cannot become solo alias");
+var aliasTestPath = Path.Combine(Path.GetTempPath(), "lyrics-alias-" + Guid.NewGuid().ToString("N"), "aliases.json");
+var aliasStore = new ConfirmedArtistAliases(aliasTestPath);
+Equal(false, aliasStore.Matches("测试歌手", "Test Singer"), "no inference before confirmation");
+aliasStore.Confirm("测试歌手", "Test Singer");
+var reopenedAliases = new ConfirmedArtistAliases(aliasTestPath);
+Equal(true, reopenedAliases.Matches("test singer", "测试歌手"), "confirmation survives restart in both directions");
+Equal(false, reopenedAliases.Matches("翻唱歌手", "Test Singer"), "confirmation does not accept a cover performer");
+reopenedAliases.Confirm("Test Singer", "Third Name");
+Equal(false, reopenedAliases.Matches("测试歌手", "Third Name"), "aliases do not spread transitively");
+reopenedAliases.Remove(reopenedAliases.Items[0]);
+Equal(false, new ConfirmedArtistAliases(aliasTestPath).Matches("测试歌手", "Test Singer"), "revocation survives restart");
+File.Delete(aliasTestPath);
+// Block writes with a directory at the file path; failed confirmation must not be remembered in memory.
+Directory.CreateDirectory(aliasTestPath);
+var failedAliasStore = new ConfirmedArtistAliases(aliasTestPath);
+try { failedAliasStore.Confirm("失败测试", "Failure Test"); throw new Exception("expected alias persistence failure"); }
+catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+Equal(false, failedAliasStore.Matches("失败测试", "Failure Test"), "failed save leaves memory unchanged");
+Directory.Delete(Path.GetDirectoryName(aliasTestPath)!, true);
+Console.WriteLine("Artist recommendation, confirmation, persistence and revocation tests passed.");

@@ -1061,6 +1061,16 @@ internal sealed class MediaLyricsController : IDisposable
         var index = _candidates.ToList().FindIndex(item => item.Key == key);
         if (index >= 0) ApplyCandidate(index, remember: true);
     }
+    internal void ConfirmCandidateAlias(string songKey, string key)
+    {
+        if (songKey != _mediaKey) throw new InvalidOperationException("歌曲已切换，请重新打开候选列表。");
+        var candidate = _candidates.FirstOrDefault(item => item.Key == key);
+        if (candidate is null || !candidate.AliasRecommendation)
+            throw new InvalidOperationException("所选候选不符合歌名和时长吻合的别名确认条件。");
+        ConfirmedArtistAliases.Current.Confirm(candidate.ExpectedArtist!, candidate.CandidateArtist!);
+        SelectCandidate(songKey, key);
+        ShowTransient("歌手别名已保存，以后会自动匹配；仍会检查歌名、时长和版本。");
+    }
     internal void RejectCandidate(string songKey, string key)
     {
         if (songKey != _mediaKey || !_candidates.Any(item => item.Key == key)) return;
@@ -1128,7 +1138,10 @@ internal sealed class MediaLyricsController : IDisposable
         if (_lyricsLoadKind != LyricsLoadKind.Unavailable ||
             string.IsNullOrWhiteSpace(_unavailableMediaKey) ||
             !string.Equals(_unavailableMediaKey, _mediaKey, StringComparison.Ordinal)) return;
-        _render("", "", 0, _artist);
+        if (_candidates.Any(item => item.AliasRecommendation))
+            _render(_title, "发现歌名和时长吻合的歌词：请在管理器 → 查看候选中确认歌手", 0, _artist);
+        else
+            _render("", "", 0, _artist);
     }
 
     public bool SetLocalLyrics(string lrc, string label, out string error)

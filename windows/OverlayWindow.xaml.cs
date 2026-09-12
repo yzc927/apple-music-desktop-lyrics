@@ -27,6 +27,7 @@ public partial class OverlayWindow : Window, IDisposable
     internal string CurrentSongKey => _controller.SongKey;
     internal IReadOnlyList<LyricsCandidate> LyricsCandidates => _controller.Candidates;
     internal void SelectLyricsVersion(string song, string key) => _controller.SelectCandidate(song, key);
+    internal void ConfirmLyricsAlias(string song, string key) => _controller.ConfirmCandidateAlias(song, key);
     internal void RejectLyricsVersion(string song, string key) => _controller.RejectCandidate(song, key);
     internal void RestoreLyricsVersions() => _controller.RestoreRejectedCandidates();
     private readonly DispatcherTimer _lockedHoverTimer;

@@ -9,7 +9,8 @@ namespace AppleMusicDesktopLyrics;
 
 internal sealed record LyricsCandidate(
     string Key, string Label, IReadOnlyList<LyricLine> Lines, double Score,
-    LyricsMatchAssessment Match, double? DurationDifferenceSeconds = null, string? RecordingIdentity = null)
+    LyricsMatchAssessment Match, double? DurationDifferenceSeconds = null, string? RecordingIdentity = null,
+    string? ExpectedArtist = null, string? CandidateArtist = null, bool AliasRecommendation = false)
 {
     public string Preview => $"{Label}\n时长差：{(DurationDifferenceSeconds is { } difference ? $"{difference:+0.0;-0.0;0.0} 秒" : "未知")} · " +
         (Lines.Any(line => line.HasWordTiming) ? "含逐词时间轴" : "整句时间轴") + "\n" +
@@ -115,7 +116,10 @@ internal sealed partial class LyricsClient
         return new LyricsCandidate(
             CandidateKey(item), $"{item.ArtistName}{albumLabel} · {durationLabel}", lines, score,
             assessment, item.Duration is { } candidateSeconds && duration.TotalSeconds > 0 ? candidateSeconds - duration.TotalSeconds : null,
-            System.Text.Json.JsonSerializer.Serialize(new { item.TrackName, item.ArtistName, item.AlbumName, item.Duration }));
+            System.Text.Json.JsonSerializer.Serialize(new { item.TrackName, item.ArtistName, item.AlbumName, item.Duration }),
+            SongMetadataNormalizer.CleanArtist(artist), item.ArtistName,
+            IsAliasRecommendation(titleMatch, artistMatch, durationDifference, variantPenalty,
+                item.Duration is > 0 && duration.TotalSeconds > 0, SongMetadataNormalizer.CleanArtist(artist), item.ArtistName));
     }
 
     private static double Score(
@@ -165,6 +169,8 @@ internal sealed partial class LyricsClient
 
     internal static double ArtistMatch(string? left, string? right)
     {
+        if (left is not null && right is not null && ConfirmedArtistAliases.Current.Matches(
+            SongMetadataNormalizer.CleanArtist(left), SongMetadataNormalizer.CleanArtist(right))) return 1;
         var first = ArtistTokens(left);
         var second = ArtistTokens(right);
         if (first.Count == 0 || second.Count == 0) return 0;
@@ -172,6 +178,11 @@ internal sealed partial class LyricsClient
         if (overlap > 0) return overlap / (double)Math.Min(first.Count, second.Count);
         return TextMatch(left, right);
     }
+
+    internal static bool IsAliasRecommendation(double titleMatch, double artistMatch, double durationDifference,
+        double variantPenalty, bool durationKnown, string expectedArtist, string candidateArtist) =>
+        titleMatch >= 0.98 && artistMatch < 0.55 && durationKnown && durationDifference <= 2.5 &&
+        variantPenalty == 0 && ConfirmedArtistAliases.CanLearn(expectedArtist, candidateArtist);
 
     private static HashSet<string> ArtistTokens(string? value) =>
         Regex.Split(value ?? "", @"\s*(?:&|＆|×|、|,|，|/| feat\.? | featuring | with | x )\s*",
