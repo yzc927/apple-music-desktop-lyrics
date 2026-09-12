@@ -9,9 +9,9 @@
     <AssemblyName>AppleMusicDesktopLyrics</AssemblyName>
     <RootNamespace>AppleMusicDesktopLyrics</RootNamespace>
     <ApplicationIcon>assets\app.ico</ApplicationIcon>
-    <Version>0.3.4</Version>
-    <AssemblyVersion>0.3.4.0</AssemblyVersion>
-    <FileVersion>0.3.4.0</FileVersion>
+    <Version>0.3.5</Version>
+    <AssemblyVersion>0.3.5.0</AssemblyVersion>
+    <FileVersion>0.3.5.0</FileVersion>
     <Product>Apple Music Desktop Lyrics</Product>
     <Description>Apple Music 桌面歌词伴侣</Description>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>

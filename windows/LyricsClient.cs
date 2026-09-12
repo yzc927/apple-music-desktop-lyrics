@@ -17,13 +17,15 @@ internal sealed record LyricsCandidate(
         string.Join("\n", Lines.Where(line => !string.IsNullOrWhiteSpace(line.Text)).Take(2).Select(line => line.Text));
 }
 
-internal sealed record LyricsSearchResult(IReadOnlyList<LyricsCandidate> Candidates)
+internal sealed record LyricsSearchResult(IReadOnlyList<LyricsCandidate> Candidates, string? Failure = null)
 {
     public static readonly LyricsSearchResult Empty = new([]);
 }
 
 internal sealed partial class LyricsClient
 {
+    private readonly HttpClient _http;
+    internal LyricsClient(HttpClient? http = null) => _http = http ?? Http;
     private static readonly HttpClient Http = new()
     {
         BaseAddress = new Uri("https://lrclib.net/"),
@@ -56,8 +58,10 @@ internal sealed partial class LyricsClient
         var exactTask = SearchEndpointAsync(exactQuery, cancellationToken);
         var broadTask = SearchEndpointAsync(titleQuery, cancellationToken);
         await Task.WhenAll(exactTask, broadTask);
-        var exact = await exactTask;
-        var broad = await broadTask;
+        var exactResult = await exactTask;
+        var broadResult = await broadTask;
+        var exact = exactResult.Items;
+        var broad = broadResult.Items;
         var exactKeys = exact.Select(CandidateKey).ToHashSet(StringComparer.Ordinal);
         var combined = exact.Concat(broad.Where(item => !exactKeys.Contains(CandidateKey(item))));
 
@@ -67,7 +71,9 @@ internal sealed partial class LyricsClient
                 exactKeys.Contains(CandidateKey(item))))
             .Where(item => item is not null)
             .Cast<LyricsCandidate>());
-        return candidates.Count == 0 ? LyricsSearchResult.Empty : new(candidates);
+        var failures = new[] { exactResult.Failure, broadResult.Failure }.Where(value => value is not null).Distinct();
+        var failure = string.Join("；", failures);
+        return new(candidates, failure.Length == 0 ? null : failure);
     }
 
     internal static IReadOnlyList<LyricsCandidate> RankCandidates(IEnumerable<LyricsCandidate> candidates) =>
@@ -77,17 +83,26 @@ internal sealed partial class LyricsClient
             .OrderBy(item => item.Score)
             .ToArray();
 
-    private static async Task<LyricsResult[]> SearchEndpointAsync(
+    private sealed record EndpointResult(LyricsResult[] Items, string? Failure = null);
+    private async Task<EndpointResult> SearchEndpointAsync(
         string endpoint, CancellationToken cancellationToken)
     {
         try
         {
-            return await Http.GetFromJsonAsync<LyricsResult[]>(endpoint, cancellationToken) ?? [];
+            var items = await _http.GetFromJsonAsync<LyricsResult[]>(endpoint, cancellationToken);
+            if (items is null || items.Any(item => item is null || item.TrackName is null || item.ArtistName is null))
+                return new([], "歌词服务返回了无效数据，请稍后重试");
+            return new(items);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (HttpRequestException) { return []; }
-        catch (System.Text.Json.JsonException) { return []; }
-        catch (TaskCanceledException) { return []; }
+        catch (HttpRequestException ex)
+        {
+            return new([], ex.StatusCode is { } status
+                ? $"歌词服务暂不可用（HTTP {(int)status}），请稍后重试"
+                : "无法连接歌词服务，请检查网络后重试");
+        }
+        catch (System.Text.Json.JsonException) { return new([], "歌词服务返回了无效数据，请稍后重试"); }
+        catch (OperationCanceledException) { return new([], "歌词请求超时，请稍后重试"); }
     }
 
     private static LyricsCandidate? CreateCandidate(

@@ -338,7 +338,10 @@ internal sealed class MediaLyricsController : IDisposable
             if (cached is not null && TryApplyStoredLyrics(cached, LyricsLoadKind.Cache)) return;
             if (await TryAppleLyricsFallbackAsync(title, loadMediaKey, loadToken)) return;
             if (IsStaleLoad()) return;
-            MarkLyricsUnavailable("没有匹配的同步歌词，可导入本地 LRC；不会自动打开 Apple 歌词面板");
+            MarkLyricsUnavailable(search.Failure is { } failure
+                ? $"{failure}；尚不能确定是否有匹配歌词"
+                : _candidates.Count > 0 ? "找到候选歌词，但匹配度不足，请在管理器中确认版本"
+                : "查询已完成，没有匹配的同步歌词，可导入本地 LRC", keepVisible: true);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -353,7 +356,7 @@ internal sealed class MediaLyricsController : IDisposable
             catch (OperationCanceledException) { return; }
             catch { /* Preserve the original LRCLIB error below. */ }
             if (IsStaleLoad()) return;
-            MarkLyricsUnavailable($"{failurePrefix}：{ex.Message}；{_appleLyrics.LastFailureReason}");
+            MarkLyricsUnavailable($"{failurePrefix}：{ex.Message}", keepVisible: true);
         }
     }
 
@@ -1107,7 +1110,7 @@ internal sealed class MediaLyricsController : IDisposable
         return true;
     }
 
-    private void MarkLyricsUnavailable(string detail)
+    private void MarkLyricsUnavailable(string detail, bool keepVisible = false)
     {
         _usingAppleLyrics = false;
         _appleFallbackUnavailable = true;
@@ -1129,7 +1132,7 @@ internal sealed class MediaLyricsController : IDisposable
         // lyric text.
         _unavailableMediaKey = _mediaKey;
         _unavailableHideTimer.Stop();
-        _unavailableHideTimer.Start();
+        if (!keepVisible) _unavailableHideTimer.Start();
     }
 
     private void HideUnavailableLyrics()

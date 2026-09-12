@@ -47,6 +47,18 @@ public partial class OverlayWindow
                 window.Height = 260;
                 window.UpdateLayout();
                 window.SaveSettings();
+                var savedText = File.ReadAllText(path);
+                using (var blockedFile = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    window.SaveSettings();
+                    Require(window._settingsSaveError is not null && window.Toast.Opacity == 1,
+                        "Save failure did not show persistent warning");
+                    window.ShowToast("已切换字体");
+                    Require(window.ToastText.Text.Contains("设置保存失败"), "Success toast hid failed-save warning");
+                }
+                Require(File.ReadAllText(path) == savedText, "Failed save damaged previous settings");
+                window.SaveSettings();
+                Require(window._settingsSaveError is null, "Save recovery did not clear warning");
                 window.RequestExit();
             }
             using (var restored = new OverlayWindow(path, false))

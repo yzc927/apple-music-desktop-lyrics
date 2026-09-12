@@ -474,9 +474,18 @@ public partial class OverlayWindow : Window, IDisposable
         return aligned;
     }
 
+    private string? _settingsSaveError;
     private void ShowToast(string message)
     {
         Toast.BeginAnimation(OpacityProperty, null);
+        if (_settingsSaveError is { } saveError)
+        {
+            Toast.MaxWidth = Math.Max(100, ActualWidth - 24);
+            ToastText.Text = saveError;
+            Toast.Visibility = Visibility.Visible;
+            Toast.Opacity = 1;
+            return;
+        }
         ToastText.Text = message;
         Toast.Visibility = Visibility.Visible;
         Toast.Opacity = 0;
@@ -1015,8 +1024,17 @@ public partial class OverlayWindow : Window, IDisposable
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
                     _fontFamily, _locked, Topmost, _clickThrough, _automaticLyricsCalibration,
                     _karaokeMode, _shareBackgroundPath));
+            if (_settingsSaveError is not null)
+            {
+                _settingsSaveError = null;
+                ShowToast("设置已成功保存。");
+            }
         }
-        catch { }
+        catch (Exception error)
+        {
+            _settingsSaveError = "设置保存失败：本次调整暂未写入磁盘，重启可能丢失。\n请检查写入权限、文件占用或磁盘空间，再调整设置重试。\n" + error.Message;
+            ShowToast(_settingsSaveError);
+        }
     }
 
     private sealed record OverlaySettings(string HighlightColor, bool AutoColor = false,
@@ -1039,6 +1057,8 @@ public partial class OverlayWindow : Window, IDisposable
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         SaveSettings();
+        if (_allowClose && _settingsSaveError is not null)
+            System.Windows.MessageBox.Show(_settingsSaveError, "设置尚未保存", MessageBoxButton.OK, MessageBoxImage.Warning);
         if (_allowClose) return;
         e.Cancel = true;
         HideToTray();

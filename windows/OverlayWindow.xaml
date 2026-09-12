@@ -69,6 +69,7 @@
                     Background="#D9000000" IsHitTestVisible="False"
                     Panel.ZIndex="20">
                 <TextBlock x:Name="ToastText" Foreground="White"
+                           TextWrapping="Wrap"
                            FontFamily="Microsoft YaHei UI" FontSize="13" />
             </Border>
 

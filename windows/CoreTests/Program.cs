@@ -1,5 +1,6 @@
 using AppleMusicDesktopLyrics;
 using System.IO;
+await LyricsFailureTests.Run();
 
 static void Equal<T>(T expected, T actual, string name)
 {

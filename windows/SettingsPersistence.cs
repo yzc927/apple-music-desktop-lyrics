@@ -67,6 +67,8 @@ internal static class SettingsPersistence
                     File.Replace(temporary, path, validPrevious ? path + ".bak" : null);
                 }
                 else File.Move(temporary, path);
+                if (Status.StartsWith($"{Path.GetFileName(path)}：保存失败", StringComparison.Ordinal))
+                    Status = $"{Path.GetFileName(path)}：设置已成功保存。";
             }
             catch (Exception ex)
             {
