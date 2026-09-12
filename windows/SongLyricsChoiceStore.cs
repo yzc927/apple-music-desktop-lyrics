@@ -14,9 +14,8 @@ internal sealed class SongLyricsChoiceStore
     {
         try
         {
-            if (!File.Exists(_path)) return;
-            _choices = JsonSerializer.Deserialize<Dictionary<string, string>>(
-                File.ReadAllText(_path)) ?? new(StringComparer.Ordinal);
+            _choices = SettingsPersistence.Load(_path, () => new Dictionary<string, string>(StringComparer.Ordinal),
+                values => values.Values.All(value => !string.IsNullOrWhiteSpace(value)));
         }
         catch { }
     }
@@ -32,9 +31,7 @@ internal sealed class SongLyricsChoiceStore
         {
             var directory = Path.GetDirectoryName(_path)!;
             Directory.CreateDirectory(directory);
-            var temporary = _path + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(_choices));
-            File.Move(temporary, _path, true);
+            SettingsPersistence.Save(_path, _choices, values => values.Values.All(value => !string.IsNullOrWhiteSpace(value)));
         }
         catch { }
     }

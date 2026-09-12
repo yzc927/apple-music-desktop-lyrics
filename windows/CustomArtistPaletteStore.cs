@@ -77,8 +77,7 @@ internal sealed partial class CustomArtistPaletteStore
     {
         try
         {
-            if (!File.Exists(_path)) return;
-            var values = JsonSerializer.Deserialize<CustomArtistPalette[]>(File.ReadAllText(_path)) ?? [];
+            var values = SettingsPersistence.Load(_path, () => Array.Empty<CustomArtistPalette>(), ValidPalettes);
             _items = values.Where(item => !string.IsNullOrWhiteSpace(item.Identity) && item.Colors.Length > 0)
                 .ToDictionary(item => ArtistColorEngine.NormalizeArtistKey(item.Identity),
                     item => item, StringComparer.Ordinal);
@@ -88,11 +87,14 @@ internal sealed partial class CustomArtistPaletteStore
 
     private void Save()
     {
-        var temporary = _path + ".tmp";
-        File.WriteAllText(temporary,
-            JsonSerializer.Serialize(GetAll(), new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(temporary, _path, true);
+        try { SettingsPersistence.Save(_path, GetAll().ToArray(), ValidPalettes); }
+        catch { Load(); throw; }
     }
+
+    private static bool ValidPalettes(CustomArtistPalette[] values) => values.All(item =>
+        item is not null && !string.IsNullOrWhiteSpace(item.Identity) && item.Colors is { Length: > 0 } &&
+        item.Colors.All(color => color is not null && NormalizeColor(color) is not null)) &&
+        values.Select(item => ArtistColorEngine.NormalizeArtistKey(item.Identity)).Distinct(StringComparer.Ordinal).Count() == values.Length;
 
     private static string? NormalizeColor(string value)
     {

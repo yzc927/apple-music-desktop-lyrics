@@ -20,16 +20,45 @@ internal sealed class LyricsPreferences
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "AppleMusicDesktopLyrics", "interaction-preferences.json");
     public static LyricsPreferences Current { get; } = Load();
+    private string? _committed;
+    internal static bool IsValid(LyricsPreferences value) =>
+        value.Hotkeys is not null && value.Hotkeys.All(pair => pair.Value is not null) &&
+        value.Rejected is not null && value.Rejected.All(pair => pair.Value is not null && pair.Value.All(version => version is not null)) &&
+        value.Readings is not null && value.Readings.All(pair => pair.Value is not null &&
+            pair.Value.All(word => word.Value is not null && word.Value.Reading is not null));
+
     private static LyricsPreferences Load()
     {
-        try { return JsonSerializer.Deserialize<LyricsPreferences>(File.ReadAllText(FilePath)) ?? new(); }
-        catch { return new(); }
+        var value = SettingsPersistence.Load(FilePath, () => new LyricsPreferences(), IsValid);
+        value._committed = JsonSerializer.Serialize(value);
+        return value;
     }
-    public void Save()
+    public void Save() => SaveTo(FilePath);
+    internal void SaveTo(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath + ".tmp", JsonSerializer.Serialize(this));
-        File.Move(FilePath + ".tmp", FilePath, true);
+        try
+        {
+            var snapshot = JsonSerializer.Serialize(this);
+            SettingsPersistence.Save(path, this, IsValid);
+            _committed = snapshot;
+        }
+        catch
+        {
+            if (_committed is { } previous)
+            {
+                var restored = JsonSerializer.Deserialize<LyricsPreferences>(previous)!;
+                Hotkeys = restored.Hotkeys; Rejected = restored.Rejected;
+                Readings = restored.Readings; OnlyUnfamiliar = restored.OnlyUnfamiliar;
+            }
+            throw;
+        }
+    }
+    internal void SaveHotkeys(Dictionary<string, string> proposed)
+    {
+        var previous = Hotkeys;
+        Hotkeys = new(proposed);
+        try { Save(); }
+        catch { Hotkeys = previous; throw; }
     }
     public bool IsRejected(string song, string version) =>
         Rejected.TryGetValue(song, out var versions) && versions.Contains(version);

@@ -15,9 +15,8 @@ internal sealed class SongOffsetStore
     {
         try
         {
-            if (!File.Exists(_path)) return;
-            _offsets = JsonSerializer.Deserialize<Dictionary<string, double>>(
-                File.ReadAllText(_path)) ?? new Dictionary<string, double>(StringComparer.Ordinal);
+            _offsets = SettingsPersistence.Load(_path, () => new Dictionary<string, double>(StringComparer.Ordinal),
+                values => values.Values.All(double.IsFinite));
         }
         catch { }
     }
@@ -44,7 +43,7 @@ internal sealed class SongOffsetStore
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, JsonSerializer.Serialize(_offsets));
+            SettingsPersistence.Save(_path, _offsets, values => values.Values.All(double.IsFinite));
         }
         catch { }
     }

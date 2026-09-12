@@ -37,9 +37,13 @@ if ($publishedFiles.Count -ne 1 -or
 }
 
 $hash = (Get-FileHash -LiteralPath $expectedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
-$checksumPath = Join-Path $artifactsRoot "AppleMusicDesktopLyrics-win-x64.sha256"
+$checksumPath = Join-Path $outputPath "AppleMusicDesktopLyrics-win-x64.sha256"
 Set-Content -LiteralPath $checksumPath -Encoding ascii `
     -Value "$hash  AppleMusicDesktopLyrics.exe"
+
+$verifiedHash = (Get-FileHash -LiteralPath $expectedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($verifiedHash -ne $hash) { throw "Published executable changed during checksum creation" }
+Write-Host "Checksum file: $checksumPath"
 
 Write-Host "Windows x64 single-file publish completed: $expectedExecutable"
 Write-Host "SHA-256: $hash"

@@ -1,4 +1,5 @@
 using AppleMusicDesktopLyrics;
+using System.IO;
 
 static void Equal<T>(T expected, T actual, string name)
 {
@@ -129,6 +130,53 @@ var longestRuby = PersonalRubyRules.Apply("明日へ", automaticRuby,
     new Dictionary<string, ReadingPreference> { ["明"] = new("めい", false), ["明日"] = new("あした", false) }, false);
 Equal("明日", longestRuby[0].DisplayText, "longest override wins");
 Exception? hotkeyFailure = null;
+var longTimeline = Enumerable.Range(0, 30).Select(i => new LyricLine(TimeSpan.FromSeconds(i), "line " + i)).ToArray();
+var changedEnding = longTimeline.ToArray();
+changedEnding[29] = changedEnding[29] with { Text = "different ending" };
+Equal(false, LyricsClient.TimelineFingerprint(longTimeline) == LyricsClient.TimelineFingerprint(changedEnding), "dedupe includes lyrics after line 24");
+var timedVersion = longTimeline.ToArray();
+timedVersion[0] = timedVersion[0] with { Segments = [new(TimeSpan.Zero, "line "), new(TimeSpan.FromMilliseconds(300), "0")] };
+Equal(false, LyricsClient.TimelineFingerprint(longTimeline) == LyricsClient.TimelineFingerprint(timedVersion), "dedupe preserves word timing");
+var endVersion = longTimeline.ToArray();
+endVersion[0] = endVersion[0] with { ExplicitEndTime = TimeSpan.FromMilliseconds(800) };
+Equal(false, LyricsClient.TimelineFingerprint(longTimeline) == LyricsClient.TimelineFingerprint(endVersion), "dedupe preserves explicit ending");
+Equal(LyricsClient.TimelineFingerprint(longTimeline), LyricsClient.TimelineFingerprint(longTimeline.ToArray()), "identical timeline fingerprint");
+
+var settingsTest = Path.Combine(Path.GetTempPath(), "lyrics-settings-test-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(settingsTest);
+try
+{
+    var settingsPath = Path.Combine(settingsTest, "settings.json");
+    var saved = new LyricsPreferences();
+    saved.Readings["song"] = new() { ["word"] = new("reading", false) };
+    saved.SaveTo(settingsPath);
+    saved.OnlyUnfamiliar = true;
+    saved.SaveTo(settingsPath);
+    File.WriteAllText(settingsPath, "{broken");
+    var recovered = SettingsPersistence.Load(settingsPath, () => new LyricsPreferences(), LyricsPreferences.IsValid);
+    Equal("reading", recovered.GetReading("song", "word")?.Reading, "corrupt settings recover last good backup");
+    Equal(false, recovered.OnlyUnfamiliar, "backup is previous committed version");
+    File.WriteAllText(settingsPath, "{\"Hotkeys\":null,\"Readings\":{\"song\":null}}");
+    recovered = SettingsPersistence.Load(settingsPath, () => new LyricsPreferences(), LyricsPreferences.IsValid);
+    Equal("reading", recovered.GetReading("song", "word")?.Reading, "structurally invalid JSON recovers backup");
+    recovered.SaveTo(settingsPath);
+    Equal(true, Directory.GetFiles(settingsTest, "*.corrupt-*").Length > 0, "preserve damaged primary for recovery");
+    using (var lockedFile = new FileStream(settingsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+    {
+        recovered.OnlyUnfamiliar = true;
+        var failed = false;
+        try { recovered.SaveTo(settingsPath); } catch (IOException) { failed = true; }
+        Equal(true, failed, "locked file save reports failure");
+        Equal(false, recovered.OnlyUnfamiliar, "failed save rolls memory back");
+    }
+    Equal(false, SettingsPersistence.Load(settingsPath, () => new LyricsPreferences(), LyricsPreferences.IsValid).OnlyUnfamiliar, "failed save keeps disk unchanged");
+    Equal(0, Directory.GetFiles(settingsTest, "*.tmp").Length, "failed writes clean their own temporary files");
+    File.WriteAllText(settingsPath, "null"); File.WriteAllText(settingsPath + ".bak", "null");
+    Equal(true, SettingsPersistence.Load(settingsPath, () => new LyricsPreferences(), LyricsPreferences.IsValid).Hotkeys.Count > 0, "both files invalid use safe defaults");
+}
+finally { Directory.Delete(settingsTest, recursive: true); }
+if (!args.Contains("--skip-native-hotkeys"))
+{
 var shortcutThread = new Thread(() =>
 {
     var previousKeys = LyricsPreferences.Current.Hotkeys;
@@ -141,6 +189,21 @@ var shortcutThread = new Thread(() =>
         Equal(true, second.Status.Contains("占用"), "native occupied hotkey notice");
         first.Dispose(); second.Apply();
         Equal(true, second.Status.Contains("已启用 1 个"), "hotkey released on dispose");
+        var persisted = false;
+        Equal(false, second.TryApply(new Dictionary<string, string> { ["test"] = "nonsense" }, () => persisted = true), "invalid proposal rejected");
+        Equal(false, persisted, "invalid proposal not saved");
+        Equal(false, second.TryApply(new Dictionary<string, string> { ["test"] = "Ctrl+Alt+Shift+F23" }, () => throw new IOException("disk failure")), "save failure rejects proposal");
+        using (var oldKeyProbe = new GlobalLyricsHotkeys(new() { ["test"] = () => { } }))
+            Equal(true, oldKeyProbe.Status.Contains("占用"), "old registration retained after failed save");
+        LyricsPreferences.Current.Hotkeys = new() { ["test"] = "Ctrl+Alt+Shift+F23" };
+        using (var blocker = new GlobalLyricsHotkeys(new() { ["test"] = () => { } }))
+        {
+            Equal(true, blocker.Status.Contains("已启用 1 个"), "new registration released after failed save");
+            Equal(false, second.TryApply(LyricsPreferences.Current.Hotkeys, () => persisted = true), "occupied proposal rejected");
+            Equal(false, persisted, "occupied proposal never saved");
+        }
+        LyricsPreferences.Current.Hotkeys = new() { ["test"] = "Ctrl+Alt+Shift+F24" };
+        Equal(true, second.TryApply(LyricsPreferences.Current.Hotkeys), "unchanged key reuses own registration");
         LyricsPreferences.Current.Hotkeys["duplicate"] = "Ctrl+Alt+Shift+F24";
         second.Dispose();
         using var duplicated = new GlobalLyricsHotkeys(new() { ["test"] = () => { }, ["duplicate"] = () => { } });
@@ -156,4 +219,28 @@ var shortcutThread = new Thread(() =>
 shortcutThread.SetApartmentState(ApartmentState.STA);
 shortcutThread.Start(); shortcutThread.Join();
 if (hotkeyFailure is not null) throw hotkeyFailure;
-Console.WriteLine("Windows core tests passed (including native hotkey conflicts, version exclusions and personal ruby).");
+}
+LyricsRecoveryTests.Run();
+RubyOverlapTests.Run();
+Console.WriteLine("Windows core tests passed (native hotkeys " + (args.Contains("--skip-native-hotkeys") ? "skipped" : "tested") + ").");
+
+// A blocked native provider must not hold up callers or spawn more workers.
+var bounded = new BoundedAsyncReader<string>();
+using var releaseRead = new ManualResetEventSlim();
+var blockedRead = bounded.ReadAsync(() => { releaseRead.Wait(); return "old song"; },
+    TimeSpan.FromMilliseconds(100), CancellationToken.None);
+Equal<string?>(null, await blockedRead, "hung read times out");
+Equal(true, bounded.Disabled, "hung provider disabled for session");
+Equal<string?>(null, await bounded.ReadAsync(() => throw new Exception("must not run"),
+    TimeSpan.FromSeconds(1), CancellationToken.None), "no second worker after timeout");
+releaseRead.Set();
+var healthyReader = new BoundedAsyncReader<string>();
+Equal("new song", await healthyReader.ReadAsync(() => "new song", TimeSpan.FromSeconds(1),
+    CancellationToken.None), "healthy read completes");
+using var cancelRead = new CancellationTokenSource();
+cancelRead.Cancel();
+try {
+    await healthyReader.ReadAsync(() => "stale", TimeSpan.FromSeconds(1), cancelRead.Token);
+    throw new Exception("cancelled song must not be read");
+} catch (OperationCanceledException) { }
+Console.WriteLine("Bounded reader regression tests passed.");

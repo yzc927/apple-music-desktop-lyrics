@@ -928,9 +928,7 @@ public partial class OverlayWindow : Window, IDisposable
     {
         try
         {
-            if (!File.Exists(_settingsPath)) return;
-            var settings = JsonSerializer.Deserialize<OverlaySettings>(File.ReadAllText(_settingsPath));
-            if (settings is null) return;
+            var settings = SettingsPersistence.Load(_settingsPath, () => new OverlaySettings(""));
 
             _autoColor = settings.AutoColor;
             _automaticLyricsCalibration = settings.AutomaticLyricsCalibration;
@@ -982,15 +980,12 @@ public partial class OverlayWindow : Window, IDisposable
         {
             var directory = Path.GetDirectoryName(_settingsPath)!;
             Directory.CreateDirectory(directory);
-            var json = JsonSerializer.Serialize(
+            SettingsPersistence.Save(_settingsPath,
                 new OverlaySettings(_highlightColor.ToString(), _autoColor,
                     IsLoaded ? Left : null, IsLoaded ? Top : null,
                     IsLoaded ? ActualWidth : null, IsLoaded ? ActualHeight : null,
                     _fontFamily, _locked, Topmost, _clickThrough, _automaticLyricsCalibration,
                     _karaokeMode, _shareBackgroundPath));
-            var temporaryPath = _settingsPath + ".tmp";
-            File.WriteAllText(temporaryPath, json);
-            File.Move(temporaryPath, _settingsPath, true);
         }
         catch { }
     }

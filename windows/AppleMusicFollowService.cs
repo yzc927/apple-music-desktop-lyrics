@@ -92,9 +92,7 @@ internal sealed class AppleMusicFollowService : IDisposable
     {
         try
         {
-            if (!File.Exists(SettingsPath)) return new FollowSettings();
-            return JsonSerializer.Deserialize<FollowSettings>(File.ReadAllText(SettingsPath))
-                ?? new FollowSettings();
+            return SettingsPersistence.Load(SettingsPath, () => new FollowSettings());
         }
         catch { return new FollowSettings(); }
     }
@@ -104,10 +102,7 @@ internal sealed class AppleMusicFollowService : IDisposable
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            var temporary = SettingsPath + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(
-                new FollowSettings(Enabled, StartupEnabled)));
-            File.Move(temporary, SettingsPath, true);
+            SettingsPersistence.Save(SettingsPath, new FollowSettings(Enabled, StartupEnabled));
         }
         catch { }
     }

@@ -16,9 +16,7 @@ internal sealed class PracticeMarkerStore
     {
         try
         {
-            if (!File.Exists(_path)) return;
-            _markers = JsonSerializer.Deserialize<Dictionary<string, List<PracticeMarker>>>(
-                File.ReadAllText(_path)) ?? new(StringComparer.Ordinal);
+            _markers = SettingsPersistence.Load(_path, () => new Dictionary<string, List<PracticeMarker>>(StringComparer.Ordinal), ValidMarkers);
         }
         catch { }
     }
@@ -50,10 +48,11 @@ internal sealed class PracticeMarkerStore
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var temporary = _path + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(_markers));
-            File.Move(temporary, _path, true);
+            SettingsPersistence.Save(_path, _markers, ValidMarkers);
         }
         catch { }
     }
+    private static bool ValidMarkers(Dictionary<string, List<PracticeMarker>> values) => values.Values.All(markers =>
+        markers is not null && markers.All(marker => marker is not null && double.IsFinite(marker.TimeSeconds) &&
+            marker.TimeSeconds >= 0 && marker.Text is not null));
 }

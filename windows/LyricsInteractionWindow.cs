@@ -63,8 +63,9 @@ internal sealed class LyricsInteractionWindow : Window
         var status = new TextBlock { Text = overlay.GlobalHotkeys?.Status, TextWrapping = TextWrapping.Wrap };
         window.Action("保存并检测冲突", () =>
         {
-            LyricsPreferences.Current.Hotkeys = fields.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim());
-            LyricsPreferences.Current.Save(); overlay.GlobalHotkeys?.Apply();
+            var proposed = fields.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim());
+            if (overlay.GlobalHotkeys is null) throw new InvalidOperationException("快捷键尚未初始化，未保存更改。");
+            overlay.GlobalHotkeys.TryApply(proposed, () => LyricsPreferences.Current.SaveHotkeys(proposed));
             status.Text = overlay.GlobalHotkeys?.Status;
         });
         window._body.Children.Add(status);

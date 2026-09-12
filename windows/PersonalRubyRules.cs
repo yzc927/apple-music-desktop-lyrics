@@ -9,10 +9,18 @@ internal static class PersonalRubyRules
         var position = 0;
         var automaticPositions = new Dictionary<int, RubySegment>();
         foreach (var segment in automatic) { automaticPositions[position] = segment; position += segment.DisplayText.Length; }
+        var boundaries = automaticPositions.Keys.Append(position).ToHashSet();
+        bool Applicable(string word, int start) => word.Length > 0 &&
+            text.AsSpan(start).StartsWith(word, StringComparison.Ordinal) &&
+            (entries[word].Reading.Length > 0 ||
+             (boundaries.Contains(start) && boundaries.Contains(start + word.Length)));
+        // Empty readings mean "keep automatic", not "erase". A reading such
+        // as 明日/あす cannot safely be split into per-character readings.
+        // Therefore partial empty/familiar rules leave that automatic token intact.
         position = 0;
         while (position < text.Length)
         {
-            var custom = entries.Keys.Where(word => word.Length > 0 && text.AsSpan(position).StartsWith(word, StringComparison.Ordinal))
+            var custom = entries.Keys.Where(word => Applicable(word, position))
                 .OrderByDescending(word => word.Length).FirstOrDefault();
             if (custom is not null)
             {
@@ -31,7 +39,7 @@ internal static class PersonalRubyRules
             }
             else if (automaticPositions.TryGetValue(position, out var segment) &&
                 !entries.Keys.Any(word => word.Length > 0 && Enumerable.Range(position + 1, Math.Max(0, segment.DisplayText.Length - 1))
-                    .Any(start => text.AsSpan(start).StartsWith(word, StringComparison.Ordinal))))
+                    .Any(start => Applicable(word, start))))
             {
                 result.Add(segment); position += segment.DisplayText.Length;
             }

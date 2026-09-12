@@ -9,7 +9,7 @@ namespace AppleMusicDesktopLyrics;
 
 internal sealed record LyricsCandidate(
     string Key, string Label, IReadOnlyList<LyricLine> Lines, double Score,
-    LyricsMatchAssessment Match, double? DurationDifferenceSeconds = null)
+    LyricsMatchAssessment Match, double? DurationDifferenceSeconds = null, string? RecordingIdentity = null)
 {
     public string Preview => $"{Label}\n时长差：{(DurationDifferenceSeconds is { } difference ? $"{difference:+0.0;-0.0;0.0} 秒" : "未知")} · " +
         (Lines.Any(line => line.HasWordTiming) ? "含逐词时间轴" : "整句时间轴") + "\n" +
@@ -60,19 +60,21 @@ internal sealed partial class LyricsClient
         var exactKeys = exact.Select(CandidateKey).ToHashSet(StringComparer.Ordinal);
         var combined = exact.Concat(broad.Where(item => !exactKeys.Contains(CandidateKey(item))));
 
-        var candidates = combined
+        var candidates = RankCandidates(combined
             .Where(item => !string.IsNullOrWhiteSpace(item.SyncedLyrics))
             .Select(item => CreateCandidate(item, title, artist, album, duration,
                 exactKeys.Contains(CandidateKey(item))))
             .Where(item => item is not null)
-            .Cast<LyricsCandidate>()
-            .GroupBy(item => TimelineFingerprint(item.Lines), StringComparer.Ordinal)
+            .Cast<LyricsCandidate>());
+        return candidates.Count == 0 ? LyricsSearchResult.Empty : new(candidates);
+    }
+
+    internal static IReadOnlyList<LyricsCandidate> RankCandidates(IEnumerable<LyricsCandidate> candidates) =>
+        candidates
+            .GroupBy(item => (item.RecordingIdentity ?? item.Label, item.DurationDifferenceSeconds, TimelineFingerprint(item.Lines)))
             .Select(group => group.OrderBy(item => item.Score).First())
             .OrderBy(item => item.Score)
-            .Take(8)
             .ToArray();
-        return candidates.Length == 0 ? LyricsSearchResult.Empty : new(candidates);
-    }
 
     private static async Task<LyricsResult[]> SearchEndpointAsync(
         string endpoint, CancellationToken cancellationToken)
@@ -112,7 +114,8 @@ internal sealed partial class LyricsClient
         var albumLabel = string.IsNullOrWhiteSpace(item.AlbumName) ? "" : $" · {item.AlbumName}";
         return new LyricsCandidate(
             CandidateKey(item), $"{item.ArtistName}{albumLabel} · {durationLabel}", lines, score,
-            assessment, item.Duration is { } candidateSeconds && duration.TotalSeconds > 0 ? candidateSeconds - duration.TotalSeconds : null);
+            assessment, item.Duration is { } candidateSeconds && duration.TotalSeconds > 0 ? candidateSeconds - duration.TotalSeconds : null,
+            System.Text.Json.JsonSerializer.Serialize(new { item.TrackName, item.ArtistName, item.AlbumName, item.Duration }));
     }
 
     private static double Score(
@@ -136,10 +139,15 @@ internal sealed partial class LyricsClient
 
     private static string CandidateKey(LyricsResult item) => item.Id is { } id
         ? id.ToString(System.Globalization.CultureInfo.InvariantCulture)
-        : $"{Normalize(item.TrackName)}|{Normalize(item.ArtistName)}|{Normalize(item.AlbumName)}|{item.Duration:0.0}";
+        : $"{Normalize(item.TrackName)}|{Normalize(item.ArtistName)}|{Normalize(item.AlbumName)}|{item.Duration:0.0}|{TimelineFingerprint(LrcParser.Parse(item.SyncedLyrics ?? ""))}";
 
-    private static string TimelineFingerprint(IReadOnlyList<LyricLine> lines) =>
-        string.Join('|', lines.Take(24).Select(line => $"{line.Time.TotalMilliseconds:0}:{Normalize(line.Text)}"));
+    internal static string TimelineFingerprint(IReadOnlyList<LyricLine> lines) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(lines.Select(line => new
+            {
+                Time = line.Time.Ticks, line.Text, End = line.ExplicitEndTime?.Ticks,
+                Segments = line.Segments?.Select(segment => new { Time = segment.Time.Ticks, segment.Text }).ToArray()
+            }))));
 
     private static double DurationDifference(double? candidateDuration, double expectedDuration) =>
         candidateDuration is { } value && expectedDuration > 0 ? Math.Abs(value - expectedDuration) : 300;

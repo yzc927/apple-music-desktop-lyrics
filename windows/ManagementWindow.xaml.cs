@@ -55,7 +55,8 @@ public partial class ManagementWindow : Window
     {
         var artist = string.IsNullOrWhiteSpace(_overlay.CurrentArtist) ? "尚未读取到歌手" : _overlay.CurrentArtist;
         CurrentArtistText.Text = artist;
-        GlobalHotkeyStatus.Text = _overlay.GlobalHotkeys?.Status ?? "快捷键尚未初始化";
+        GlobalHotkeyStatus.Text = (_overlay.GlobalHotkeys?.Status ?? "快捷键尚未初始化") +
+            (string.IsNullOrEmpty(SettingsPersistence.Status) ? "" : "\n" + SettingsPersistence.Status);
         CurrentModeText.Text = _overlay.IsAutoColor ? "自动配色已开启；未收录歌手使用所选后备色" : "当前使用手动颜色";
         LyricsSourceText.Text = $"歌词来源：{_overlay.CurrentLyricsSource}";
         LyricsVersionText.Text = _overlay.LyricsCandidateCount > 0
@@ -403,12 +404,22 @@ public partial class ManagementWindow : Window
 
     private void EditLyrics_Click(object sender, RoutedEventArgs e)
     {
+        var songKey = _overlay.CurrentSongKey;
         var editor = new LyricsEditorWindow(
-            _overlay.CurrentLrcText, () => _overlay.CurrentPlaybackPosition) { Owner = this };
+            _overlay.CurrentLrcText, () => _overlay.CurrentPlaybackPosition, text =>
+            {
+                if (songKey != _overlay.CurrentSongKey) return "歌曲已切换，未保存到另一首歌；请先切回原歌曲再试。";
+                return _overlay.SaveLocalLyrics(text, "本地编辑", out var error) ? null : error;
+            }) { Owner = this };
         if (editor.ShowDialog() != true) return;
-        if (!_overlay.SaveLocalLyrics(editor.LyricsText, "本地编辑", out var error))
-            MessageBox.Show(this, error, "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
         RefreshState();
+    }
+
+    private bool TryPersist(Action action)
+    {
+        if (PersistenceOperation.Try(action, out var error)) return true;
+        MessageBox.Show(this, error, "操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return false;
     }
 
     private void ExportLyrics_Click(object sender, RoutedEventArgs e)
@@ -434,7 +445,7 @@ public partial class ManagementWindow : Window
         if (!_overlay.HasLocalLyricsOverride) { MessageBox.Show(this, "当前歌曲没有本地覆盖。"); return; }
         if (MessageBox.Show(this, "删除当前歌曲的本地歌词覆盖？", "确认删除",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        _overlay.RemoveLocalLyricsOverride();
+        if (!TryPersist(_overlay.RemoveLocalLyricsOverride)) return;
         RefreshState();
     }
 
@@ -442,7 +453,7 @@ public partial class ManagementWindow : Window
     {
         if (MessageBox.Show(this, "清空所有 LRCLIB 离线缓存？本地编辑的歌词不会删除。", "确认清空",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        _overlay.ClearLyricsCache();
+        if (!TryPersist(_overlay.ClearLyricsCache)) return;
         RefreshState();
     }
 
@@ -459,7 +470,7 @@ public partial class ManagementWindow : Window
         {
             var colors = Regex.Split(ArtistColorsEditor.Text, @"[,，;；\s]+")
                 .Where(value => !string.IsNullOrWhiteSpace(value));
-            CustomArtistPaletteStore.Current.Set(ArtistNameEditor.Text, colors);
+            if (!TryPersist(() => CustomArtistPaletteStore.Current.Set(ArtistNameEditor.Text, colors))) return;
             if (CustomArtistPaletteStore.Current.TryGet(ArtistNameEditor.Text, out var savedColors))
                 SetArtistColors(savedColors);
             _overlay.RefreshArtistColor();
@@ -483,7 +494,7 @@ public partial class ManagementWindow : Window
         }
         if (MessageBox.Show(this, $"删除“{identity}”的自定义配色？", "确认删除",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        CustomArtistPaletteStore.Current.Remove(identity);
+        if (!TryPersist(() => CustomArtistPaletteStore.Current.Remove(identity))) return;
         _overlay.RefreshArtistColor();
         BuildArtistList();
         RefreshState();

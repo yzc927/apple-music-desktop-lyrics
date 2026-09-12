@@ -11,6 +11,7 @@ namespace AppleMusicDesktopLyrics;
 public partial class LyricsEditorWindow : Window, INotifyPropertyChanged
 {
     private readonly Func<TimeSpan> _playbackPosition;
+    private readonly Func<string, string?>? _save;
     private bool _synchronizing;
     private EditableLyricLine? _selectedLine;
 
@@ -31,9 +32,10 @@ public partial class LyricsEditorWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public LyricsEditorWindow(string initialText, Func<TimeSpan> playbackPosition)
+    public LyricsEditorWindow(string initialText, Func<TimeSpan> playbackPosition, Func<string, string?>? save = null)
     {
         _playbackPosition = playbackPosition;
+        _save = save;
         InitializeComponent();
         DataContext = this;
         ReplaceLines(LrcParser.Parse(initialText));
@@ -260,6 +262,16 @@ public partial class LyricsEditorWindow : Window, INotifyPropertyChanged
             MessageBox.Show(this, $"还有 {invalid} 行的词级时间不是递增顺序，或行尾早于最后一个词。",
                 "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
+        }
+        if (_save is not null)
+        {
+            string? failure = null;
+            if (!PersistenceOperation.Try(() => failure = _save(LyricsText), out var error)) failure = error;
+            if (failure is not null)
+            {
+                MessageBox.Show(this, failure, "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
         }
         DialogResult = true;
     }

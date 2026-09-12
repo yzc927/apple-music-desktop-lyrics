@@ -3,7 +3,8 @@ using System.IO;
 
 namespace AppleMusicDesktopLyrics;
 
-internal sealed record StoredLyrics(string Lrc, string Label, DateTimeOffset UpdatedAt);
+internal sealed record StoredLyrics(string Lrc, string Label, DateTimeOffset UpdatedAt,
+    string? CandidateKey = null, LyricsMatchConfidence? Confidence = null, bool UserSelected = false);
 
 internal sealed class LocalLyricsStore
 {
@@ -12,12 +13,11 @@ internal sealed class LocalLyricsStore
     private Dictionary<string, StoredLyrics> _overrides;
     private Dictionary<string, StoredLyrics> _cache;
 
-    public LocalLyricsStore()
+    public LocalLyricsStore(string? directory = null)
     {
-        var directory = Path.Combine(
+        directory ??= Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AppleMusicDesktopLyrics");
-        Directory.CreateDirectory(directory);
         _overridePath = Path.Combine(directory, "local-lyrics.json");
         _cachePath = Path.Combine(directory, "lyrics-cache.json");
         _overrides = Load(_overridePath);
@@ -32,55 +32,60 @@ internal sealed class LocalLyricsStore
     public void SetOverride(string songKey, string lrc, string label = "本地编辑")
     {
         if (string.IsNullOrWhiteSpace(songKey)) return;
-        _overrides[songKey] = new StoredLyrics(lrc, label, DateTimeOffset.UtcNow);
-        Save(_overridePath, _overrides);
+        var updated = Load(_overridePath);
+        updated[songKey] = new StoredLyrics(lrc, label, DateTimeOffset.UtcNow);
+        Save(_overridePath, updated);
+        _overrides = updated;
     }
 
     public void RemoveOverride(string songKey)
     {
-        if (_overrides.Remove(songKey)) Save(_overridePath, _overrides);
+        var updated = Load(_overridePath);
+        if (updated.Remove(songKey)) Save(_overridePath, updated);
+        _overrides = updated;
     }
 
-    public void SetCache(string songKey, string lrc, string label)
+    public void SetCache(string songKey, string lrc, string label,
+        string? candidateKey = null, LyricsMatchConfidence? confidence = null, bool userSelected = false)
     {
         if (string.IsNullOrWhiteSpace(songKey) || string.IsNullOrWhiteSpace(lrc)) return;
-        _cache[songKey] = new StoredLyrics(lrc, label, DateTimeOffset.UtcNow);
+        var updated = Load(_cachePath);
+        updated[songKey] = new StoredLyrics(lrc, label, DateTimeOffset.UtcNow, candidateKey, confidence, userSelected);
         // Avoid unbounded growth while retaining the most recently used songs.
-        if (_cache.Count > 500)
-            _cache = _cache.OrderByDescending(item => item.Value.UpdatedAt).Take(450)
+        if (updated.Count > 500)
+            updated = updated.OrderByDescending(item => item.Value.UpdatedAt).Take(450)
                 .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-        Save(_cachePath, _cache);
+        Save(_cachePath, updated);
+        _cache = updated;
     }
 
     public void ClearCache()
     {
-        _cache.Clear();
-        Save(_cachePath, _cache);
+        var updated = new Dictionary<string, StoredLyrics>(StringComparer.Ordinal);
+        Save(_cachePath, updated);
+        _cache = updated;
     }
 
     public void RemoveCache(string songKey)
     {
-        if (_cache.Remove(songKey)) Save(_cachePath, _cache);
+        var updated = Load(_cachePath);
+        if (updated.Remove(songKey)) Save(_cachePath, updated);
+        _cache = updated;
     }
 
     private static StoredLyrics? Get(Dictionary<string, StoredLyrics> source, string key) =>
         !string.IsNullOrWhiteSpace(key) && source.TryGetValue(key, out var value) ? value : null;
 
-    private static Dictionary<string, StoredLyrics> Load(string path)
-    {
-        try
-        {
-            if (!File.Exists(path)) return new(StringComparer.Ordinal);
-            return JsonSerializer.Deserialize<Dictionary<string, StoredLyrics>>(File.ReadAllText(path))
-                   ?? new(StringComparer.Ordinal);
-        }
-        catch { return new(StringComparer.Ordinal); }
-    }
+    private static bool IsValid(Dictionary<string, StoredLyrics> values) =>
+        values.All(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value is not null &&
+            !string.IsNullOrWhiteSpace(pair.Value.Lrc) && pair.Value.Label is not null &&
+            (pair.Value.Confidence is null || Enum.IsDefined(pair.Value.Confidence.Value)));
+
+    private static Dictionary<string, StoredLyrics> Load(string path) =>
+        new(SettingsPersistence.Load(path, () => new Dictionary<string, StoredLyrics>(), IsValid), StringComparer.Ordinal);
 
     private static void Save(string path, Dictionary<string, StoredLyrics> values)
     {
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(values));
-        File.Move(temporary, path, true);
+        SettingsPersistence.Save(path, values, IsValid);
     }
 }

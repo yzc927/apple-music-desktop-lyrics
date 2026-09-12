@@ -7,6 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\BoundedAsyncReader.cs" Link="BoundedAsyncReader.cs" />
+    <Compile Include="..\SettingsPersistence.cs" Link="SettingsPersistence.cs" />
+    <Compile Include="..\LocalLyricsStore.cs" Link="LocalLyricsStore.cs" />
+    <Compile Include="..\LyricsCandidatePolicy.cs" Link="LyricsCandidatePolicy.cs" />
+    <Compile Include="..\PersistenceOperation.cs" Link="PersistenceOperation.cs" />
+    <Compile Include="..\LyricsClient.cs" Link="LyricsClient.cs" />
     <Compile Include="..\LyricsPreferences.cs" Link="LyricsPreferences.cs" />
     <Compile Include="..\GlobalLyricsHotkeys.cs" Link="GlobalLyricsHotkeys.cs" />
     <Compile Include="..\JapaneseRubyAnalyzer.cs" Link="JapaneseRubyAnalyzer.cs" />

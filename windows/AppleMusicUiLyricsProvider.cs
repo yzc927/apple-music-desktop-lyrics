@@ -16,7 +16,6 @@ internal sealed class AppleMusicUiLyricsProvider
     private const uint WmNull = 0;
     private const uint SmtoBlock = 0x0001;
     private const uint SmtoAbortIfHung = 0x0002;
-    private const string LyricsButtonId = "LyricsToggleButton";
     private const string CurrentLineId = "CurrentLine";
     private const string CurrentInstrumentalId = "CurrentInstrumental";
     private const string LineId = "Line";
@@ -33,23 +32,22 @@ internal sealed class AppleMusicUiLyricsProvider
     public string LastFailureReason { get; private set; } = "尚未读取 Apple Music 歌词";
     public string LastStrategyName { get; private set; } = "";
 
-    public async Task<AppleLyricsSnapshot?> PrepareAsync(string title, CancellationToken cancellationToken)
+    private readonly BoundedAsyncReader<AppleLyricsSnapshot> _reader = new();
+
+    public async Task<AppleLyricsSnapshot?> ReadAsync(string title,
+        bool allowBoundaryEstimate, CancellationToken cancellationToken)
     {
-        await Task.Run(OpenLyricsPanelIfNeeded, cancellationToken);
-        // UI Automation walks execute inside Apple Music's WebView process.
-        // Keep fallback discovery bounded so an unexposed lyrics tree cannot
-        // continuously consume Apple Music's UI thread.
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var snapshot = await Task.Run(() => TryRead(title), cancellationToken);
-            if (snapshot is not null) return snapshot;
-            await Task.Delay(750, cancellationToken);
-        }
-        return null;
+        var snapshot = await _reader.ReadAsync(() => TryRead(title, allowBoundaryEstimate),
+            TimeSpan.FromSeconds(2), cancellationToken);
+        if (_reader.Disabled)
+            LastFailureReason = "Apple 歌词读取超时，本次运行已停用；请使用在线或本地 LRC";
+        return snapshot;
     }
 
-    public AppleLyricsSnapshot? TryRead(
+    public Task<AppleLyricsSnapshot?> PrepareAsync(string title, CancellationToken cancellationToken) =>
+        ReadAsync(title, true, cancellationToken);
+
+    private AppleLyricsSnapshot? TryRead(
         string? title = null, bool allowBoundaryEstimate = true)
     {
         LastStrategyName = "";
@@ -97,26 +95,6 @@ internal sealed class AppleMusicUiLyricsProvider
             ? "Apple Music 歌词面板与当前歌曲不一致"
             : $"Apple Music 未暴露可读取的当前歌词行（已尝试 {string.Join("、", attempted.Distinct())}）";
         return null;
-    }
-
-    public void OpenLyricsPanelIfNeeded()
-    {
-        foreach (var root in GetRoots(out _))
-        {
-            try
-            {
-                var button = root.FindFirst(TreeScope.Descendants,
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, LyricsButtonId));
-                if (button?.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern) != true ||
-                    pattern is not TogglePattern toggle)
-                    continue;
-                if (toggle.Current.ToggleState == ToggleState.Off) toggle.Toggle();
-                return;
-            }
-            catch (ElementNotAvailableException) { }
-            catch (InvalidOperationException) { }
-            catch (COMException) { }
-        }
     }
 
     private static AppleLyricsSnapshot ReadInstrumental(AutomationElement instrumental)
