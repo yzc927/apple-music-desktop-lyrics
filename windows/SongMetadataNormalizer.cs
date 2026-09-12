@@ -30,6 +30,20 @@ internal static partial class SongMetadataNormalizer
         return WhitespaceRegex().Replace(cleaned, " ").Trim();
     }
 
+    // Matching aliases are explicit identities, never inferred from palette colors
+    // or loose transliteration (which can accidentally accept another performer).
+    internal static string CanonicalArtistIdentity(string value)
+    {
+        var cleaned = CleanArtist(value);
+        var key = string.Concat(cleaned.Where(character => !char.IsWhiteSpace(character)))
+            .Normalize().ToUpperInvariant();
+        return key switch
+        {
+            "HOSHIMACHISUISEI" or "SUISEIHOSHIMACHI" or "星街すいせい" => "星街すいせい",
+            _ => cleaned
+        };
+    }
+
     public static IReadOnlySet<string> VariantTags(string? value)
     {
         var normalized = (value ?? "").Normalize().ToLowerInvariant()

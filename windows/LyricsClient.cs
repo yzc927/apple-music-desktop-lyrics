@@ -163,7 +163,7 @@ internal sealed partial class LyricsClient
         return TokenOverlap(first, second);
     }
 
-    private static double ArtistMatch(string? left, string? right)
+    internal static double ArtistMatch(string? left, string? right)
     {
         var first = ArtistTokens(left);
         var second = ArtistTokens(right);
@@ -176,6 +176,7 @@ internal sealed partial class LyricsClient
     private static HashSet<string> ArtistTokens(string? value) =>
         Regex.Split(value ?? "", @"\s*(?:&|＆|×|、|,|，|/| feat\.? | featuring | with | x )\s*",
                 RegexOptions.IgnoreCase)
+            .Select(SongMetadataNormalizer.CanonicalArtistIdentity)
             .Select(Normalize)
             .Where(item => item.Length > 0)
             .ToHashSet(StringComparer.Ordinal);

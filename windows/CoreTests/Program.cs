@@ -276,3 +276,24 @@ foreach (var custom in CustomArtistPaletteStore.Current.GetAll())
     Equal(string.Join(",", custom.Colors), string.Join(",", ArtistColorEngine.Resolve(custom.Identity).Colors),
         "user palette has priority");
 Console.WriteLine($"Artist palette coverage passed for {libraryArtists.Length} library/observed credits.");
+
+Equal(1d, LyricsClient.ArtistMatch("Hoshimachi Suisei", "星街すいせい"), "Suisei localized artist identity");
+Equal(1d, LyricsClient.ArtistMatch("Suisei Hoshimachi", "星街すいせい — 月に向かって撃て - EP"), "alias with album metadata");
+Equal(1d, LyricsClient.ArtistMatch("Hoshimachi Suisei & Kanaria", "星街すいせい × Kanaria"), "collaboration alias");
+Equal(true, LyricsClient.ArtistMatch("Hoshimachi Suisei", "別の歌手") < 0.55, "unrelated performer still rejected");
+Equal(LyricsMatchConfidence.High, LyricsMatchConfidenceEvaluator.Evaluate(1,
+    LyricsClient.ArtistMatch("Hoshimachi Suisei", "星街すいせい"), 0, 0, true).Confidence,
+    "matching 193-second localized recording auto-selects");
+Equal(LyricsMatchConfidence.Low, LyricsMatchConfidenceEvaluator.Evaluate(1,
+    LyricsClient.ArtistMatch("Hoshimachi Suisei", "星街すいせい"), 16, 0, true).Confidence,
+    "alias does not bypass duration safety");
+if (args.Contains("--check-current-song"))
+{
+    var result = await new LyricsClient().SearchAsync("月に向かって撃て", "星街すいせい", "月に向かって撃て - EP",
+        TimeSpan.FromSeconds(193), CancellationToken.None);
+    foreach (var candidate in result.Candidates)
+        Console.WriteLine($"Current song: {candidate.Key}: {candidate.Match.Confidence}, {candidate.Label}, {candidate.Lines.Count} lines");
+    Equal(true, result.Candidates.Any(item => item.Key == "28621477" && item.Match.Confidence == LyricsMatchConfidence.High),
+        "live current song exact recording matches");
+}
+Console.WriteLine("Localized artist matching tests passed.");
