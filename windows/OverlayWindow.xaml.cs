@@ -55,6 +55,8 @@ public partial class OverlayWindow : Window, IDisposable
     private string _fontFamily = "Microsoft YaHei UI";
     private string _lastArtist = "";
     private bool _hasSavedPlacement;
+    private bool _placementInitialized;
+    private readonly bool _startMedia;
     private string? _shareBackgroundPath;
     private string _lastBurnInLine = "";
     private DateTimeOffset _lastLineChangedAt = DateTimeOffset.UtcNow;
@@ -97,8 +99,12 @@ public partial class OverlayWindow : Window, IDisposable
     public string CurrentFontFamily => _fontFamily;
     public IReadOnlyList<FontChoice> AvailableFonts => GetAvailableFonts();
 
-    public OverlayWindow()
+    public OverlayWindow() : this(null, true) { }
+
+    internal OverlayWindow(string? settingsPath, bool startMedia)
     {
+        if (settingsPath is not null) _settingsPath = settingsPath;
+        _startMedia = startMedia;
         InitializeComponent();
         _placementSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _placementSaveTimer.Tick += (_, _) =>
@@ -128,10 +134,14 @@ public partial class OverlayWindow : Window, IDisposable
         };
         LoadSettings();
         _controller = new MediaLyricsController(SetLines, ShowToast);
+        ApplyFontFamily();
         _controller.SetAutomaticCalibration(_automaticLyricsCalibration, notify: false);
         _controller.SetPresentationState(visible: false, _karaokeMode);
-        _controller.Start();
-        _burnInTimer.Start();
+        if (_startMedia)
+        {
+            _controller.Start();
+            _burnInTimer.Start();
+        }
     }
 
     private void SchedulePlacementSave()
@@ -156,6 +166,7 @@ public partial class OverlayWindow : Window, IDisposable
             Top = Math.Clamp(Top, SystemParameters.VirtualScreenTop,
                 SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 70);
         }
+        _placementInitialized = true;
         ApplyTopmostState(Topmost, notify: false, persist: false);
         ApplyLockState(_locked, notify: false, persist: false);
         ApplyExtendedStyles();
@@ -168,7 +179,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        GlobalHotkeys = new GlobalLyricsHotkeys(new()
+        if (_startMedia) GlobalHotkeys = new GlobalLyricsHotkeys(new()
         {
             ["显示 / 隐藏"] = () => { if (IsVisible) HideToTray(); else ShowFromTray(); },
             ["锁定 / 解锁"] = ToggleLock,
@@ -176,7 +187,7 @@ public partial class OverlayWindow : Window, IDisposable
             ["歌词快 0.5 秒"] = () => AdjustLyrics(0.5),
             ["循环当前句"] = ToggleCurrentLineLoop
         });
-        Closed += (_, _) => GlobalHotkeys.Dispose();
+        Closed += (_, _) => GlobalHotkeys?.Dispose();
         _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _hwndSource?.AddHook(WindowMessageHook);
     }
@@ -191,6 +202,13 @@ public partial class OverlayWindow : Window, IDisposable
             unchecked((short)(packed & 0xffff)),
             unchecked((short)((packed >> 16) & 0xffff)));
         var localPoint = PointFromScreen(screenPoint);
+        var resizeHit = OverlayLayout.ResizeHit(localPoint.X, localPoint.Y, ActualWidth, ActualHeight);
+        if (ElementBoundsContains(Grip, localPoint, 0, 0)) resizeHit = 17;
+        if (resizeHit != 0)
+        {
+            handled = true;
+            return new IntPtr(resizeHit);
+        }
         if (IsInteractivePoint(localPoint)) return IntPtr.Zero;
 
         handled = true;
@@ -200,9 +218,18 @@ public partial class OverlayWindow : Window, IDisposable
     private void UpdateTypography()
     {
         if (ActualWidth <= 0 || ActualHeight <= 0) return;
-        var widthRatio = ActualWidth / 920d;
-        var heightRatio = ActualHeight / 150d;
-        var scale = Math.Clamp(Math.Sqrt(widthRatio * heightRatio), 0.58, 2.5);
+        var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        FormattedText Measure(string text, double size, FontWeight weight) => new(
+            string.IsNullOrEmpty(text) ? "Ag国" : text, CultureInfo.CurrentUICulture,
+            System.Windows.FlowDirection.LeftToRight,
+            new Typeface(CurrentLine.FontFamily, FontStyles.Normal, weight, FontStretches.Normal),
+            size, System.Windows.Media.Brushes.White, pixelsPerDip);
+        var current = Measure(CurrentLine.Text, 30, FontWeights.SemiBold);
+        var next = Measure(NextLine.Text, 19, FontWeights.Normal);
+        // Budget for both ruby rows, spacing, shadows and window padding.
+        var scale = OverlayLayout.Scale(ActualWidth, ActualHeight,
+            current.WidthIncludingTrailingWhitespace, next.WidthIncludingTrailingWhitespace,
+            current.Height + next.Height + 30 * 0.58 + 19 * 0.60);
         CurrentLine.FontSize = 30 * scale;
         CurrentHighlightLine.FontSize = 30 * scale;
         NextLine.FontSize = 19 * scale;
@@ -215,6 +242,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void SetLines(string current, string next, double progress, string artist)
     {
+        var textChanged = CurrentLine.Text != current || NextLine.Text != next;
         var songChanged = _rubySongKey != CurrentSongKey;
         _rubySongKey = CurrentSongKey;
         if (!string.Equals(_lastArtist, artist, StringComparison.Ordinal))
@@ -239,6 +267,7 @@ public partial class OverlayWindow : Window, IDisposable
             NextLine.Text = next;
             BuildNextRuby(next);
         }
+        if (textChanged || songChanged) UpdateTypography();
         _highlightProgress = Math.Clamp(progress, 0, 1);
         UpdateHighlightClip();
         UpdateSourceBadge();
@@ -492,17 +521,14 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void UpdateHoverBackdrop()
     {
-        // The former backdrop filled the entire overlay.  A 46% band is less than
-        // half as tall while leaving enough room for two lyric rows at minimum size.
-        var backdropHeight = Math.Max(54, ActualHeight * 0.46);
-        HoverBackdrop.Height = backdropHeight;
-        var backdropTop = Math.Max(0, (ActualHeight - backdropHeight) / 2);
-        Grip.Margin = new Thickness(0, backdropTop + backdropHeight - Grip.Height - 4, 4, 0);
+        HoverBackdrop.Height = Math.Max(1, ActualHeight - 2);
+        Grip.Margin = new Thickness(0, 0, 4, 4);
     }
 
     private bool IsInteractivePoint(System.Windows.Point point)
     {
-        return ElementBoundsContains(LyricsLayer, point, 10, 8) ||
+        return (!_locked && OverlayLayout.ResizeHit(point.X, point.Y, ActualWidth, ActualHeight) != 0) ||
+               ElementBoundsContains(LyricsLayer, point, 10, 8) ||
                ElementBoundsContains(Toolbar, point, 2, 2) ||
                ElementBoundsContains(SourceBadge, point, 4, 4) ||
                (!_locked && ElementBoundsContains(Grip, point, 4, 4));
@@ -525,7 +551,7 @@ public partial class OverlayWindow : Window, IDisposable
 
     private void TrackPointerPassThrough()
     {
-        if (!IsVisible) return;
+        if (!IsVisible || Mouse.LeftButton == MouseButtonState.Pressed) return;
         var cursor = System.Windows.Forms.Cursor.Position;
         var local = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
         var isInsideWindow = new Rect(0, 0, ActualWidth, ActualHeight).Contains(local);
@@ -606,6 +632,8 @@ public partial class OverlayWindow : Window, IDisposable
         _locked = locked;
         ResizeMode = _locked ? ResizeMode.NoResize : ResizeMode.CanResize;
         Grip.Visibility = _locked ? Visibility.Collapsed : Visibility.Visible;
+        ResizeOutline.Visibility = Grip.Visibility;
+        _nativePointerPassThrough = false;
         var unlockedVisibility = _locked ? Visibility.Collapsed : Visibility.Visible;
         PreviousTrackButton.Visibility = unlockedVisibility;
         PlayPauseButton.Visibility = unlockedVisibility;
@@ -900,7 +928,7 @@ public partial class OverlayWindow : Window, IDisposable
         CurrentHighlightLine.FontFamily = family;
         NextLine.FontFamily = family;
         UpdateHighlightMetrics();
-        RefreshRubyLines();
+        UpdateTypography();
         UpdateHighlightClip();
     }
 
@@ -950,7 +978,6 @@ public partial class OverlayWindow : Window, IDisposable
             if (!string.IsNullOrWhiteSpace(settings.FontFamily) && GetAvailableFonts().Any(item =>
                     string.Equals(item.FamilyName, settings.FontFamily, StringComparison.OrdinalIgnoreCase)))
                 _fontFamily = settings.FontFamily;
-            ApplyFontFamily();
             CurrentHighlightLine.Foreground = new SolidColorBrush(_highlightColor);
             ColorButton.Foreground = new SolidColorBrush(_highlightColor);
             AutoColorButton.Foreground = _autoColor
@@ -975,7 +1002,8 @@ public partial class OverlayWindow : Window, IDisposable
     {
         // Startup failures or a very early shutdown must never erase a placement that was
         // successfully read from disk. Hidden windows remain loaded and are still saved.
-        if (!IsLoaded) return;
+        if (!IsLoaded || !_placementInitialized || !double.IsFinite(ActualWidth) ||
+            !double.IsFinite(ActualHeight) || ActualWidth < MinWidth || ActualHeight < MinHeight) return;
         try
         {
             var directory = Path.GetDirectoryName(_settingsPath)!;

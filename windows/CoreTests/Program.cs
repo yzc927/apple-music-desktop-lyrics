@@ -244,3 +244,35 @@ try {
     throw new Exception("cancelled song must not be read");
 } catch (OperationCanceledException) { }
 Console.WriteLine("Bounded reader regression tests passed.");
+
+Equal(12, OverlayLayout.ResizeHit(450, 2, 920, 150), "top resize");
+Equal(15, OverlayLayout.ResizeHit(450, 149, 920, 150), "bottom resize");
+Equal(17, OverlayLayout.ResizeHit(919, 149, 920, 150), "corner resize");
+Equal(0, OverlayLayout.ResizeHit(450, 75, 920, 150), "interior is not resize");
+foreach (var size in new[] { (360d, 100d), (1833d, 150d), (1486d, 390d) })
+{
+    var scale = OverlayLayout.Scale(size.Item1, size.Item2, 1200, 1800, 105);
+    Equal(true, scale * 1800 <= size.Item1 - 64 + 0.001, "long next lyric fits horizontally");
+    Equal(true, scale * 105 <= size.Item2 - 54 + 0.001, "ruby and both lines fit vertically");
+}
+Console.WriteLine("Overlay resize and typography tests passed.");
+
+var libraryArtists = System.Text.Json.JsonSerializer.Deserialize<string[]>(
+    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "LibraryArtists.json")))!;
+const string missingPalette = "#01020304";
+foreach (var artist in libraryArtists)
+    Equal(false, ArtistColorEngine.Resolve(artist, missingPalette).Colors.Contains(missingPalette),
+        $"library artist has a fixed palette: {artist}");
+var ensemble = ArtistColorEngine.Resolve("夜々(CV:原田ひとみ)、いろり(CV:茅野愛衣)、小紫(CV:小倉唯)");
+Equal(3, ensemble.Colors.Count, "all separate CV performers are retained");
+Equal(ArtistColorEngine.Resolve("茅野愛衣").Colors[0], ensemble.Colors[1], "second CV palette");
+var lightMusic = ArtistColorEngine.Resolve("桜高軽音部(CV:豊崎愛生、日笠陽子、佐藤聡美、寿美菜子)");
+Equal(4, lightMusic.Colors.Count, "four performers inside one CV credit");
+Equal(ArtistColorEngine.Resolve("寿美菜子").Colors[0], lightMusic.Colors[3], "fourth CV palette");
+Equal(ArtistColorEngine.Resolve("小倉唯").Colors[0], ArtistColorEngine.Resolve("小倉 唯").Colors[0], "whitespace alias");
+Equal(string.Join(",", ArtistColorEngine.Resolve("Taylor Swift").Colors),
+    string.Join(",", ArtistColorEngine.Resolve("テイラー・スウィフト").Colors), "localized metadata alias");
+foreach (var custom in CustomArtistPaletteStore.Current.GetAll())
+    Equal(string.Join(",", custom.Colors), string.Join(",", ArtistColorEngine.Resolve(custom.Identity).Colors),
+        "user palette has priority");
+Console.WriteLine($"Artist palette coverage passed for {libraryArtists.Length} library/observed credits.");

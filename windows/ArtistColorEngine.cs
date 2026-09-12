@@ -106,6 +106,7 @@ internal static partial class ArtistColorEngine
 
     private static readonly IReadOnlyDictionary<string, string[]> CuratedByNormalizedName = Curated
         .Concat(AdditionalArtistColors.Palettes)
+        .Concat(LibraryArtistColors.Palettes)
         .GroupBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .ToDictionary(group => group.Key, group => group.First().Value, StringComparer.Ordinal);
 
@@ -115,12 +116,15 @@ internal static partial class ArtistColorEngine
         if (string.IsNullOrWhiteSpace(identity))
             return new ArtistPalette("Unknown", [unknownArtistColor ?? Fallback[0]]);
 
-        // Apple Music often credits character songs as "Character (CV.Actor)".
-        // The performer after CV owns the palette; the fictional character prefix
-        // is display metadata rather than a stable artist identity.
-        var voiceActor = VoiceActorCredit().Match(identity);
-        if (voiceActor.Success)
-            identity = voiceActor.Groups["actors"].Value.Trim();
+        // Preserve explicitly configured character/group palettes, including custom ones.
+        if (TryGetCurated(identity, out var credited))
+            return new ArtistPalette(identity, credited);
+
+        // Collect every CV credit, including several actors in one parenthesis.
+        // Taking only the first match loses the other singers in character ensembles.
+        var voiceActors = VoiceActorCredit().Matches(identity);
+        if (voiceActors.Count > 0)
+            identity = string.Join(" × ", voiceActors.Select(match => match.Groups["actors"].Value.Trim()));
 
         // Known groups are resolved before splitting. This lets a group own a
         // deliberate signature gradient without pretending its name lists members.
@@ -130,7 +134,7 @@ internal static partial class ArtistColorEngine
         var artists = CollaborationSeparator().Split(identity)
             .Select(x => x.Trim()).Where(x => x.Length > 0)
             .DistinctBy(NormalizeArtistKey, StringComparer.Ordinal)
-            .Take(3).ToArray();
+            .Take(5).ToArray();
         if (artists.Length > 1)
         {
             var colors = artists.Select(artist => ResolveSingle(artist, unknownArtistColor)).ToArray();
@@ -145,6 +149,7 @@ internal static partial class ArtistColorEngine
         .Select(item => new KeyValuePair<string, string[]>(item.Identity, item.Colors))
         .Concat(Curated)
         .Concat(AdditionalArtistColors.Palettes)
+        .Concat(LibraryArtistColors.Palettes)
         .DistinctBy(item => NormalizeArtistKey(item.Key), StringComparer.Ordinal)
         .OrderBy(item => item.Key, StringComparer.CurrentCultureIgnoreCase)
         .Select(item => new ArtistPalette(item.Key, item.Value))

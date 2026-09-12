@@ -7,6 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\ArtistColorEngine.cs" Link="ArtistColorEngine.cs" />
+    <Compile Include="..\AdditionalArtistColors.cs" Link="AdditionalArtistColors.cs" />
+    <Compile Include="..\LibraryArtistColors.cs" Link="LibraryArtistColors.cs" />
+    <Compile Include="..\CustomArtistPaletteStore.cs" Link="CustomArtistPaletteStore.cs" />
+    <None Include="LibraryArtists.json" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\OverlayLayout.cs" Link="OverlayLayout.cs" />
     <Compile Include="..\BoundedAsyncReader.cs" Link="BoundedAsyncReader.cs" />
     <Compile Include="..\SettingsPersistence.cs" Link="SettingsPersistence.cs" />
     <Compile Include="..\LocalLyricsStore.cs" Link="LocalLyricsStore.cs" />

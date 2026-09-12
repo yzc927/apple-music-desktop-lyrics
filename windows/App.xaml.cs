@@ -23,6 +23,19 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (e.Args.Contains("--layout-self-test"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try { OverlayWindow.RunLayoutSelfTest(); Shutdown(0); }
+            catch (Exception error)
+            {
+                System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                    "lyrics-layout-self-test-error.txt"), error.ToString());
+                Shutdown(1);
+            }
+            return;
+        }
+
         _singleInstance = new SingleInstanceCoordinator(
             "AppleMusicDesktopLyrics", () => Dispatcher.BeginInvoke(ShowManagement));
         if (!_singleInstance.IsPrimary)
